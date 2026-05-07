@@ -1,0 +1,20 @@
+langchain>=0.1.0
+langchain-community
+langgraph           # ReAct 및 StateGraph 구현의 핵심
+pydantic>=2.0       # A2A 프로토콜 스케마 정의
+mcp                 # Model Context Protocol SDK (12종 Tool 연결용)
+
+openai           
+httpx              
+fastapi             
+uvicorn[standard]
+websockets          
+pymupdf            
+qdrant-client      
+neo4j              
+sentence-transformers 
+
+ragas              
+python-dotenv       
+pytest
+pytest-asyncio      
