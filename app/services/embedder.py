@@ -10,7 +10,7 @@ A6000 서버 통합 시 qdrant_path → qdrant_url로 전환.
 
 from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트가 동작하도록 함
 
-import logging # 진행 상황 로깅용
+import logging  # 진행 상황 로깅용
 from pathlib import Path  # 파일 경로를 객체로 다루기 위한 모듈
 
 from langchain_core.documents import Document        # LangChain 기본 문서 단위
@@ -88,7 +88,7 @@ class VehicleEmbedder:
 
         # LangChain Qdrant의 add_documents가 임베딩 + Qdrant upsert를 한 번에 처리
         for i in range(0, len(documents), batch_size):
-            batch = documents[i: i + batch_size]
+            batch = documents[i: i + batch_size]  # 배치 단위로 슬라이싱
             self._vectorstore.add_documents(batch)
             logger.info("임베딩 진행: %d / %d", min(i + batch_size, len(documents)), len(documents))
 
@@ -128,6 +128,8 @@ class VehicleEmbedder:
     def _ensure_collection(self) -> None:
         """
         Qdrant 컬렉션이 없으면 생성하고 payload 인덱스를 추가한다.
+        int8 스칼라 양자화를 적용하여 메모리 사용량을 약 75% 줄인다.
+        양자화 벡터로 1차 검색 후 원본 벡터로 재정렬(rescore)하여 정확도를 보완한다.
         payload 인덱스는 source, section, content_type 기반, 필터 검색 속도를 높여준다.
         """
         # 현재 존재하는 컬렉션 이름 목록 조회
@@ -142,6 +144,16 @@ class VehicleEmbedder:
             vectors_config=qmodels.VectorParams(
                 size=VECTOR_SIZE,                  # 벡터 차원 수
                 distance=qmodels.Distance.COSINE,  # 유사도 측정 방식
+            ),
+            # int8 스칼라 양자화: float32 대비 메모리 75% 절감
+            # always_ram=True: 양자화 벡터를 RAM에 유지하여 검색 속도 확보
+            # quantile=0.99: 상위 1% 이상치 제외하고 양자화 범위 설정
+            quantization_config=qmodels.ScalarQuantization(
+                scalar=qmodels.ScalarQuantizationConfig(
+                    type=qmodels.ScalarType.INT8,  # float32 → int8 변환
+                    quantile=0.99,                 # 상위 1% 이상치 제외
+                    always_ram=True,               # 양자화 벡터 RAM 상주
+                )
             ),
         )
 

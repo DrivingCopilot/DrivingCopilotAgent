@@ -6,5 +6,8 @@ __pycache__/
 # Python 가상환경 추가
 .venv/
 
-# PDF 파일만 제외 (README는 포함)
-data/chunks.json
+# Qdrant_storage/ — 런타임 임시 파일
+**/.lock
+
+# 개발자 개인 에디터 설정
+.vscode/    
