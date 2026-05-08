@@ -10,6 +10,13 @@ A6000 서버 통합 시 qdrant_path → qdrant_url로 전환.
 
 from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트가 동작하도록 함
 
+from app.core.config import (  # 전역 설정 상수 import
+    MODEL_NAME,
+    VECTOR_SIZE,
+    QDRANT_PATH,
+    COLLECTION_NAME,
+)
+
 import logging  # 진행 상황 로깅용
 from pathlib import Path  # 파일 경로를 객체로 다루기 위한 모듈
 
@@ -20,17 +27,6 @@ from qdrant_client import QdrantClient               # Qdrant 클라이언트 (�
 from qdrant_client.http import models as qmodels     # Qdrant 설정 모델 (VectorParams, Distance 등)
 
 logger = logging.getLogger(__name__)  # 현재 모듈 이름으로 로거 생성
-
-
-# ---------------------------------------------------------------------------
-# 설정 상수 (추후 app/core/config.py로 이동 예정)
-# ---------------------------------------------------------------------------
-
-MODEL_NAME = "BAAI/bge-m3"          # 임베딩 모델. A6000 통합 시 vLLM으로 교체
-VECTOR_SIZE = 1024                   # bge-m3 dense 벡터 차원
-QDRANT_PATH = "./qdrant_storage"     # 로컬 파일 저장 경로. A6000 통합 시 URL로 전환
-COLLECTION_NAME = "vehicle_manuals"  # Qdrant 컬렉션 이름
-
 
 class VehicleEmbedder:
     """
@@ -166,7 +162,6 @@ class VehicleEmbedder:
             )
 
         logger.info("Qdrant 컬렉션 생성: %s", COLLECTION_NAME)
-
 
 # 기능 시험용 코드
 if __name__ == "__main__":
