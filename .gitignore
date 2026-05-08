@@ -3,5 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Python 가상환경 추가
+.venv/
+
 # PDF 파일만 제외 (README는 포함)
 data/chunks.json
