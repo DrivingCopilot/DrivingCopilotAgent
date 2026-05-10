@@ -23,20 +23,24 @@ websocket_manager = MockWebsocketManager()
 def get_agent_registry() -> list[dict]:
     """Mock registry to fetch available agents dynamically."""
     return [
-        {
+        { # Perception agent의 MCP Tool: VLM, camera_feed
             "name": "perception",
             "skill": "Visual/spatial reasoning and camera/image analysis.",
             "mcp_tools": ["analyze_camera_feed", "detect_objects"]
         },
-        {
+        { # knowledge agent의 MCP Tool: Qdrant, Neo4j, DB
             "name": "knowledge",
             "skill": "Retrieves vehicle manuals, FAQs, and domain knowledge.",
             "mcp_tools": ["vector_rag_search", "graph_rag_search"]
         },
-        {
+        { # execution agent의 MCP Tool: 12종 Vehicle Tool
             "name": "execution",
             "skill": "Vehicle control commands, API interactions, and structured state modification.",
-            "mcp_tools": ["set_climate_control", "query_vehicle_state", "execute_sql"]
+            "mcp_tools": [
+                "climate", "navigation", "media", "vehicle_status", 
+                "window", "lighting", "seat", "parking", 
+                "emergency", "driving_mode", "wiper", "dashboard_query"
+            ]
         }
     ]
 
@@ -71,7 +75,7 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
 """
 
-def supervisor_node(state: AgentState) -> Dict[str, Any]:
+async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph 기반 Supervisor Node 고도화 (Qwen2-VL 7B 활용)
     1. WebSocket 실시간 스트리밍 연동
@@ -80,14 +84,16 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     4. Reflexion 및 파라미터 에러 Self-Loop 복구 로직
     """
     
-    # 1. WebSocket 실시간 스트리밍 연동 (팀원 A 협업)
-    websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "Planning next steps..."}))
+    # 1. WebSocket 실시간 스트리밍 연동
+    await websocket_manager.send_status(json.dumps({"type": "status", "data": "Planning next steps..."}))
     
     messages = state.get("messages", [])
     plan = state.get("plan", [])
     context_data = state.get("context_data", {})
     error_count = state.get("error_count", {})
     feedback = state.get("feedback", "")
+    route_type = state.get("route_type", "")
+    current_next_agent = state.get("next_agent", "")
     
     # 2. 에러 횟수 초과에 따른 하드 Fallback
     timeout_err = error_count.get("timeout", 0)
@@ -96,17 +102,22 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     
     if timeout_err >= 2 or param_err >= 2 or sql_err >= 3:
         fallback_msg = AIMessage(content="시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)")
-        websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
+        await websocket_manager.send_status(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
         return {
             "messages": [fallback_msg],
             "next_agent": "__end__",
             "plan": []
         }
     
-    llm = ChatOpenAI(model="qwen2-vl-7b-instruct", temperature=0.1) 
+    # 전략적 모델 라우팅 (G1 비용 최적화)
+    if route_type == 'vision' or current_next_agent == 'perception':
+        model_name = "qwen2-vl-7b-instruct"
+    else:
+        model_name = "qwen2-vl-7b-instruct-int4"
+        
+    llm = ChatOpenAI(model=model_name, temperature=0.1) 
     
-    # 3. Context Fusion 고도화 (팀원 D 협업)
-    # Vector RAG와 Graph RAG 결과를 구분하여 주입
+    # 3. Context Fusion 고도화
     vector_rag = context_data.get("vector_results", [])
     graph_rag = context_data.get("graph_results", [])
     vehicle_state = context_data.get("vehicle_state", {})
@@ -134,7 +145,7 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
 4. If insufficient, formulate the next steps in the 'plan' array and choose the 'next_agent'.
 """
 
-    # 5. A2A 프로토콜 동적 연동 (팀원 C 협업)
+    # 5. A2A 프로토콜 동적 연동 
     dynamic_cards = _build_dynamic_agent_cards()
     system_msg_content = SUPERVISOR_SYSTEM_PROMPT.format(agent_cards=dynamic_cards)
 
@@ -143,9 +154,14 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
     messages_to_send.append(HumanMessage(content=eval_prompt))
     
     try:
-        response = llm.invoke(messages_to_send)
-        content = response.content.strip()
+        content = ""
+        # 실시간 토큰 스트리밍 구현
+        async for chunk in llm.astream(messages_to_send):
+            if chunk.content:
+                await websocket_manager.send_status(json.dumps({"type": "text", "data": chunk.content}))
+                content += chunk.content
         
+        content = content.strip()
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
@@ -161,25 +177,28 @@ def supervisor_node(state: AgentState) -> Dict[str, Any]:
         
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Qwen2-VL response as JSON: {e}. Raw content: {content}")
-        # 6. JSON 파싱 실패 시 Self-loop 복구 로직 제안
-        # 파라미터 에러를 증가시키고, 피드백을 추가하여 supervisor로 다시 라우팅 (Self-loop)
-        updated_error_count = dict(error_count) # create copy to maintain state immutability conceptually before returning
+        updated_error_count = dict(error_count) 
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
         
-        websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
+        await websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
         return {
             "error_count": updated_error_count,
             "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
-            "next_agent": "supervisor" # Assume the graph routes 'supervisor' back to this node
+            "next_agent": "supervisor" 
         }
     except Exception as e:
          logger.error(f"Unexpected error during LLM invocation: {e}")
          return {"next_agent": "__end__"}
         
-    websocket_manager.send_status_sync(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
+    await websocket_manager.send_status(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
     
-    return {
+    # AgentState 업데이트 시 messages 리스트에 수퍼바이저의 판단 결과(reasoning)를 AIMessage 형태로 추가
+    result = {
         "plan": new_plan,
         "next_agent": next_agent,
-        "feedback": "" # Clear feedback upon successful routing
+        "feedback": ""
     }
+    if reasoning:
+        result["messages"] = [AIMessage(content=reasoning)]
+        
+    return result
