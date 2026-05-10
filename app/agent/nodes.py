@@ -7,89 +7,145 @@ from .state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# 수퍼바이저 에이전트의 페르소나 및 하위 에이전트(Agent Card) 정의
-AGENT_CARDS = """You are a Supervisor Agent orchestrating a Multi-Agent System for a Driving Copilot.
-Your role is to analyze the user's request, evaluate current context, and coordinate sub-agents using a 'Plan-and-Execute' pattern.
-You will communicate with agents via A2A delegation and MCP (Model Context Protocol).
+# --- Mock external dependencies ---
+# In a real scenario, these would be imported from other modules in the project.
 
-[Available Sub-Agents (Agent Cards)]
-1. perception: Handles visual/spatial reasoning, analyzing camera/image data, and understanding the physical environment of the vehicle.
-2. knowledge: Handles bge-m3 based RAG searches for vehicle manuals, FAQs, and domain knowledge.
-3. execution: Handles actual vehicle control commands, API interactions, and SQL queries to modify or retrieve structured vehicle states.
+class MockWebsocketManager:
+    async def send_status(self, message: str):
+        logger.info(f"WS_MOCK_SEND: {message}")
+        
+    def send_status_sync(self, message: str):
+        # Synchronous fallback if the node is not async
+        logger.info(f"WS_MOCK_SEND: {message}")
 
-[Rules]
-- Always output your response in strictly valid JSON format.
-- Keys must be "plan" (a list of step-by-step strings) and "next_agent" (one of "perception", "knowledge", "execution", or "__end__").
-- If the request is fulfilled, set "next_agent" to "__end__" and provide an empty plan.
+websocket_manager = MockWebsocketManager()
+
+def get_agent_registry() -> list[dict]:
+    """Mock registry to fetch available agents dynamically."""
+    return [
+        {
+            "name": "perception",
+            "skill": "Visual/spatial reasoning and camera/image analysis.",
+            "mcp_tools": ["analyze_camera_feed", "detect_objects"]
+        },
+        {
+            "name": "knowledge",
+            "skill": "Retrieves vehicle manuals, FAQs, and domain knowledge.",
+            "mcp_tools": ["vector_rag_search", "graph_rag_search"]
+        },
+        {
+            "name": "execution",
+            "skill": "Vehicle control commands, API interactions, and structured state modification.",
+            "mcp_tools": ["set_climate_control", "query_vehicle_state", "execute_sql"]
+        }
+    ]
+
+# -----------------------------------
+
+def _build_dynamic_agent_cards() -> str:
+    registry = get_agent_registry()
+    cards_str = ""
+    for idx, agent in enumerate(registry, 1):
+        cards_str += f"{idx}. {agent['name']}:\n"
+        cards_str += f"   - Skill: {agent['skill']}\n"
+        cards_str += f"   - MCP Tools: {', '.join(agent['mcp_tools'])}\n"
+    return cards_str
+
+SUPERVISOR_SYSTEM_PROMPT = """You are a highly capable Supervisor Agent orchestrating a Multi-Agent System for a Driving Copilot.
+Your role is to analyze the user's request, evaluate the current context, and coordinate sub-agents using a 'Plan-and-Execute' pattern.
+You rely on Chain-of-Thought reasoning to make decisions.
+
+[Available Sub-Agents (Dynamic Agent Cards)]
+{agent_cards}
+
+[Rules & Protocol]
+1. Use A2A delegation by selecting the appropriate agent from the list above.
+2. If the user's request requires understanding the physical environment, delegate to 'perception'.
+3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'.
+   - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
+4. If the user requests an action or structured data retrieval, delegate to 'execution'.
+5. Always output your response in strictly valid JSON format.
+6. The JSON must contain three keys:
+   - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
+   - "plan": A list of step-by-step strings for the execution plan.
+   - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
 """
 
 def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
-    LangGraph 기반 Supervisor Node (Qwen2-VL 7B 활용)
-    1. 실패 처리 로직(에러 카운트) 검사
-    2. Context Data (RAG, VehicleState 등) 평가 (Evaluate)
-    3. Plan 수정 및 다음 에이전트 라우팅 (Reflexion)
+    LangGraph 기반 Supervisor Node 고도화 (Qwen2-VL 7B 활용)
+    1. WebSocket 실시간 스트리밍 연동
+    2. 동적 Agent Registry 주입
+    3. Knowledge Fusion 및 CoT 기반 추론
+    4. Reflexion 및 파라미터 에러 Self-Loop 복구 로직
     """
-    # 1. WebSocket 스트리밍을 위한 노드 실행 상태 로깅
-    logger.info("tool_start: supervisor_node - evaluating state and planning")
+    
+    # 1. WebSocket 실시간 스트리밍 연동 (팀원 A 협업)
+    websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "Planning next steps..."}))
     
     messages = state.get("messages", [])
     plan = state.get("plan", [])
     context_data = state.get("context_data", {})
     error_count = state.get("error_count", {})
+    feedback = state.get("feedback", "")
     
-    # 2. 실패 처리 로직 반영 (타임아웃 2회, 파라미터 2회, SQL 3회)
+    # 2. 에러 횟수 초과에 따른 하드 Fallback
     timeout_err = error_count.get("timeout", 0)
     param_err = error_count.get("parameter", 0)
     sql_err = error_count.get("sql", 0)
     
     if timeout_err >= 2 or param_err >= 2 or sql_err >= 3:
-        logger.warning(f"Error thresholds exceeded (timeout: {timeout_err}, param: {param_err}, sql: {sql_err}). Terminating execution.")
         fallback_msg = AIMessage(content="시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)")
-        logger.info("tool_end: supervisor_node - fallback triggered")
+        websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
         return {
             "messages": [fallback_msg],
             "next_agent": "__end__",
             "plan": []
         }
     
-    # 3. 모델 설정 (Qwen2-VL 7B Planner/Supervisor 역할 - OpenAI 호환 API 가정)
-    # LLM Provider의 설정에 따라 base_url 등을 변경 가능합니다.
     llm = ChatOpenAI(model="qwen2-vl-7b-instruct", temperature=0.1) 
     
-    # 4. 수퍼바이저 핵심 로직: Context Data 판단(Evaluate) 및 Reflexion
-    context_str = json.dumps(context_data, ensure_ascii=False) if context_data else "None"
+    # 3. Context Fusion 고도화 (팀원 D 협업)
+    # Vector RAG와 Graph RAG 결과를 구분하여 주입
+    vector_rag = context_data.get("vector_results", [])
+    graph_rag = context_data.get("graph_results", [])
+    vehicle_state = context_data.get("vehicle_state", {})
     
-    eval_prompt = f"""Current Context Data (bge-m3 RAG results & VehicleState):
-{context_str}
+    context_str = f"""[Context Data]
+- Vector RAG Results: {vector_rag}
+- Graph RAG Results: {graph_rag}
+- Vehicle State: {vehicle_state}
+"""
+    
+    # 4. 강화된 Reflexion 로직: feedback이 존재하면 프롬프트에 반영
+    reflexion_str = ""
+    if feedback:
+        reflexion_str = f"\n[Reflexion Feedback from Previous Attempt]\n{feedback}\nPlease adjust your plan based on this feedback."
 
-Current Plan:
+    eval_prompt = f"""{context_str}
+[Current Plan]
 {plan}
+{reflexion_str}
 
 [Instructions]
-1. Evaluate if the 'Current Context Data' provides enough information to answer the user's latest request.
-2. If sufficient, or if the user's request is completely fulfilled:
-   - "plan": []
-   - "next_agent": "__end__"
-3. If insufficient (Reflexion needed), revise the 'Current Plan' and choose the 'next_agent' to execute the next step.
-   - "plan": ["step 1", "step 2", ...]
-   - "next_agent": "perception" or "knowledge" or "execution"
-
-Respond ONLY in JSON.
+1. Think step-by-step (Chain-of-Thought). First, evaluate if the current Context Data is sufficient to answer the user's request.
+2. Pay special attention to whether you need more 'entities and relationships' (Graph RAG) vs 'semantic similarity' (Vector RAG).
+3. If sufficient, output an empty plan and "__end__" for next_agent.
+4. If insufficient, formulate the next steps in the 'plan' array and choose the 'next_agent'.
 """
 
-    messages_to_send = [SystemMessage(content=AGENT_CARDS)]
+    # 5. A2A 프로토콜 동적 연동 (팀원 C 협업)
+    dynamic_cards = _build_dynamic_agent_cards()
+    system_msg_content = SUPERVISOR_SYSTEM_PROMPT.format(agent_cards=dynamic_cards)
+
+    messages_to_send = [SystemMessage(content=system_msg_content)]
     messages_to_send.extend(messages)
     messages_to_send.append(HumanMessage(content=eval_prompt))
     
-    logger.info("planning: Generating next steps via Qwen2-VL...")
-    
     try:
-        # Qwen2-VL 7B를 활용한 라우팅 및 계획 수립
         response = llm.invoke(messages_to_send)
-        
-        # JSON 결과 파싱 (향후 with_structured_output 사용 권장)
         content = response.content.strip()
+        
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
@@ -99,15 +155,31 @@ Respond ONLY in JSON.
         
         new_plan = parsed_result.get("plan", [])
         next_agent = parsed_result.get("next_agent", "__end__")
+        reasoning = parsed_result.get("reasoning", "")
         
+        logger.info(f"Supervisor Reasoning: {reasoning}")
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Qwen2-VL response as JSON: {e}. Raw content: {content}")
+        # 6. JSON 파싱 실패 시 Self-loop 복구 로직 제안
+        # 파라미터 에러를 증가시키고, 피드백을 추가하여 supervisor로 다시 라우팅 (Self-loop)
+        updated_error_count = dict(error_count) # create copy to maintain state immutability conceptually before returning
+        updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
+        
+        websocket_manager.send_status_sync(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
+        return {
+            "error_count": updated_error_count,
+            "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
+            "next_agent": "supervisor" # Assume the graph routes 'supervisor' back to this node
+        }
     except Exception as e:
-        logger.error(f"Failed to parse Qwen2-VL response: {e}")
-        # 파싱 오류 시 안전하게 종료 (또는 에러 카운트 증가 로직 추가 가능)
-        return {"next_agent": "__end__"}
+         logger.error(f"Unexpected error during LLM invocation: {e}")
+         return {"next_agent": "__end__"}
         
-    logger.info(f"tool_end: supervisor_node - Next agent selected: {next_agent}")
+    websocket_manager.send_status_sync(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
     
     return {
         "plan": new_plan,
-        "next_agent": next_agent
+        "next_agent": next_agent,
+        "feedback": "" # Clear feedback upon successful routing
     }
