@@ -109,13 +109,8 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
             "plan": []
         }
     
-    # 전략적 모델 라우팅 (G1 비용 최적화)
-    if route_type == 'vision' or current_next_agent == 'perception':
-        model_name = "qwen2-vl-7b-instruct"
-    else:
-        model_name = "qwen2-vl-7b-instruct-int4"
-        
-    llm = ChatOpenAI(model=model_name, temperature=0.1) 
+    # 수퍼바이저 전용 모델 고정 (G1 비용 최적화 준수)
+    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1) 
     
     # 3. Context Fusion 고도화
     vector_rag = context_data.get("vector_results", [])
@@ -123,6 +118,8 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     vehicle_state = context_data.get("vehicle_state", {})
     
     context_str = f"""[Context Data]
+- Route Type Hint: {route_type}
+- Previous Agent Hint: {current_next_agent}
 - Vector RAG Results: {vector_rag}
 - Graph RAG Results: {graph_rag}
 - Vehicle State: {vehicle_state}
