@@ -1,13 +1,28 @@
-# Python
+.venv/
+venv/
+ENV/
+
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+.env
+.idea/
+
+
+*.log
+data/raw/           # Python
 __pycache__/
 *.pyc
 *.pyo
 
-# Python 가상환경 추가
-.venv/
 
 # Qdrant_storage/ — 런타임 임시 파일
 **/.lock
 
 # 개발자 개인 에디터 설정
-.vscode/    
+.vscode  
+
+gemini.md
