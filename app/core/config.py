@@ -32,3 +32,17 @@ MIN_TEXT_LENGTH = 20   # 이 길이 미만 페이지는 노이즈로 제거 (Veh
 
 CHUNK_MIN_TOKENS = 64                          # 이 토큰 수 미만 청크는 앞 청크에 병합
 BREAKPOINT_THRESHOLD_TYPE = "standard_deviation"  # 시맨틱 경계 감지 방식
+
+# ---------------------------------------------------------------------------
+# 서버 (Agent supervisor / Backend)
+# ---------------------------------------------------------------------------
+
+import os
+
+AGENT_HOST = os.getenv("AGENT_HOST", "0.0.0.0")
+AGENT_PORT = int(os.getenv("AGENT_PORT", "8001"))                # supervisor FastAPI 포트
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")  # DrivingCopilotBackend
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",   # React frontend
+    "http://localhost:8000",   # FastAPI backend (server-to-server 호출용)
+]
