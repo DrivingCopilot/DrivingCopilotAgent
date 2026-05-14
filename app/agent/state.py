@@ -4,6 +4,7 @@ import operator
 class AgentState(TypedDict):
     # 1. 단기 메모리 및 기본 컨텍스트
     messages: Annotated[list, operator.add]  
+    diagnostic_text: str
     route_type: str                          
     
     # 2. Plan-and-Execute 및 A2A 상태
@@ -16,4 +17,10 @@ class AgentState(TypedDict):
     
     # 4. 실패 처리 (Retry) 로직
     error_count: Dict[str, int]              
-    feedback: str                           
+    feedback: str             
+
+
+    # 지식 추출 및 통합
+    extracted_entities: Annotated[List[str], operator.add]
+    extracted_relationships: Annotated[List[Dict], operator.add]
+    natural_language_context: str

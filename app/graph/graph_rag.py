@@ -11,6 +11,7 @@ from neo4j_graphrag.experimental.components.entity_relation_extractor import LLM
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
+from app.agent.state import AgentState
 
 from app.graph.schema import DrivingGraphSchema
 
@@ -31,18 +32,6 @@ class LocalQwen2VL(BaseChatModel):
     def _llm_type(self) -> str:
         return "local-qwen2-vl-tensorrt"
 
-# --- 2. LangGraph State Schema ---
-class GraphState(TypedDict):
-    """
-    LangGraph State representing the conversational and extraction context.
-    Integrated into the overall LangGraph orchestrator.
-    """
-    messages: List[BaseMessage]
-    diagnostic_text: str
-    extracted_entities: List[Dict[str, Any]]
-    extracted_relationships: List[Dict[str, Any]]
-    natural_language_context: str
-    errors: List[str]
 
 # --- 3. MCP Tool Interface (Input/Output Schemas) ---
 class ExtractionInput(BaseModel):
@@ -104,18 +93,8 @@ class VehicleGraphManager:
         Includes failure handling with tenacity (max 2 retries).
         """
         try:
-            # Assuming LLMEntityRelationExtractor uses synchronous run by default,
-            # we wrap it in an asyncio thread to avoid blocking the event loop.
-            # If the library supports native async (e.g., extractor.arun), that should be preferred.
             extraction_result = await asyncio.to_thread(self.extractor.run, text)
-            
-            # Optionally persist extracted results directly into the graph DB asynchronously here.
-            # Example implementation stub:
-            # async with self.driver.session(database=self.database) as session:
-            #     pass 
-                
-            # Formatting as dict for consistency
-            # Replace with actual extraction object parsing if neo4j_graphrag returns a specific type
+
             return {
                 "success": True,
                 "data": getattr(extraction_result, "dict", lambda: extraction_result)()
@@ -150,7 +129,7 @@ class VehicleGraphManager:
             
         return " ".join(sentences)
 
-    # --- MCP Tool Interface ---
+
     async def mcp_run_extraction(self, input_data: ExtractionInput) -> ExtractionOutput:
         """
         MCP Tool wrapper: Exposes extraction logic as an MCP-compatible interface.
@@ -180,37 +159,3 @@ class VehicleGraphManager:
                 error=str(e)
             )
 
-    # --- LangGraph Node Interface ---
-    async def run_knowledge_agent_node(self, state: GraphState) -> GraphState:
-        """
-        LangGraph Node: Takes the current state, performs extraction, 
-        and updates the state with newly discovered graph context.
-        """
-        text = state.get("diagnostic_text", "")
-        if not text:
-            return state
-            
-        try:
-            result = await self.extract_and_store(text)
-            ext_data = result.get("data", {})
-            
-            entities = ext_data.get("entities", []) if isinstance(ext_data, dict) else []
-            relationships = ext_data.get("relationships", []) if isinstance(ext_data, dict) else []
-            
-            # Context Fusion
-            nl_context = self._to_natural_language(entities, relationships)
-            
-            # Safely append or overwrite state lists
-            state["extracted_entities"] = state.get("extracted_entities", []) + entities
-            state["extracted_relationships"] = state.get("extracted_relationships", []) + relationships
-            
-            # Merge Natural Language contexts
-            existing_context = state.get("natural_language_context", "")
-            state["natural_language_context"] = f"{existing_context}\n{nl_context}".strip()
-            
-        except Exception as e:
-            errors = state.get("errors", [])
-            errors.append(f"Graph extraction failed after retries: {str(e)}")
-            state["errors"] = errors
-            
-        return state
