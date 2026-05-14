@@ -1,9 +1,10 @@
 from typing import TypedDict, Annotated, List, Dict, Any
 import operator
+from langgraph.graph.message import add_messages
 
 class AgentState(TypedDict):
     # 1. 단기 메모리 및 기본 컨텍스트
-    messages: Annotated[list, operator.add]  
+    messages: Annotated[list, add_messages]  
     route_type: str                          
     
     # 2. Plan-and-Execute 및 A2A 상태
