@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # --- 1. Abstracted Local LLM Interface ---
 class LocalQwen2VL(BaseChatModel):
-    model_name: str = "qwen2-vl-7b-instruct-int4"
+    model_name: str = "qwen2-vl-1.5b-instruct-int4"
     
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         raise NotImplementedError("Requires local TensorRT-LLM binding implementation")
@@ -30,7 +30,7 @@ class LocalQwen2VL(BaseChatModel):
         
     @property
     def _llm_type(self) -> str:
-        return "local-qwen2-vl-tensorrt"
+        return "local-qwen2-vl-1.5b-executor"
 
 
 # --- 3. MCP Tool Interface (Input/Output Schemas) ---
