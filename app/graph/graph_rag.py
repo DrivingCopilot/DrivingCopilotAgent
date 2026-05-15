@@ -87,7 +87,7 @@ class VehicleGraphManager:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True
     )
-    async def extract_and_store(self, text: str) -> dict:
+    async def extracting_data(self, text: str) -> dict:
         """
         Async extraction of entities and relationships, and storage to Neo4j.
         Includes failure handling with tenacity (max 2 retries).
@@ -135,15 +135,17 @@ class VehicleGraphManager:
         MCP Tool wrapper: Exposes extraction logic as an MCP-compatible interface.
         """
         try:
-            result = await self.extract_and_store(input_data.text)
+            result = await self.extracting_data(input_data.text)
             ext_data = result.get("data", {})
             
-            # Default empty lists if format is not strictly dictionaries
+
             entities = ext_data.get("entities", []) if isinstance(ext_data, dict) else []
             relationships = ext_data.get("relationships", []) if isinstance(ext_data, dict) else []
             
             nl_context = self._to_natural_language(entities, relationships)
             
+
+            # JSON 형식으로 데이터 반환
             return ExtractionOutput(
                 success=True,
                 entities=entities,
