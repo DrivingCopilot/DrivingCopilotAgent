@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict
+from functools import lru_cache
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
@@ -131,6 +132,10 @@ def route_next(state: AgentState) -> str:
 # StateGraph 조립
 # ---------------------------------------------------------------------------
 
+# @lru_cache가 중간에서 알아서 캐시된 걸 돌려줌. build_graph()할때마다 그래프 다시 컴파일 안해도 되게 함
+# 한번 컴파일해놓고 계속 사용. 
+
+@lru_cache(maxsize=1)
 def build_graph():
     """
     StateGraph를 조립하고 컴파일하여 반환한다.
@@ -174,6 +179,7 @@ def build_graph():
 # ---------------------------------------------------------------------------
 # 외부 호출 함수
 # ---------------------------------------------------------------------------
+
 
 async def run_graph(user_message: str, route_type: str = "") -> AgentState:
     """
