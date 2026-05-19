@@ -20,6 +20,7 @@ __pycache__/
 
 
 # Qdrant_storage/ — 런타임 임시 파일
+qdrant_storage/
 **/.lock
 
 # 개발자 개인 에디터 설정
