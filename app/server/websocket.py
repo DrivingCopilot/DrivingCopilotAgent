@@ -77,7 +77,7 @@ streamer_proxy = _StreamerProxy()
 
 
 @router.websocket("/ws")
-async def supervisor_ws(ws: WebSocket) -> None:
+async def chat_ws(ws: WebSocket) -> None:
     """
     클라이언트가 query 를 JSON 으로 보내면 LangGraph 그래프(run_graph) 를 실행하고,
     내부 스트리밍(text/status 등)은 세션 로컬 Streamer 가 전송한다.
