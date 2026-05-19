@@ -12,10 +12,8 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from langchain_core.messages import HumanMessage
 
-from app.agent import nodes
-from app.agent.state import AgentState
+from app.graph.builder import run_graph
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +79,11 @@ streamer_proxy = _StreamerProxy()
 @router.websocket("/ws")
 async def supervisor_ws(ws: WebSocket) -> None:
     """
-    클라이언트가 query 를 JSON 으로 보내면 supervisor_node 를 호출하고,
+    클라이언트가 query 를 JSON 으로 보내면 LangGraph 그래프(run_graph) 를 실행하고,
     내부 스트리밍(text/status 등)은 세션 로컬 Streamer 가 전송한다.
     턴이 끝나면 done 프레임을 보내고 다음 입력을 기다린다.
 
-    기대 입력: {"query": "에어컨 켜줘"}
+    기대 입력: {"query": "에어컨 켜줘", "route_type": "tool"}  (route_type 은 선택)
     """
     await ws.accept()
     while True:
@@ -97,8 +95,10 @@ async def supervisor_ws(ws: WebSocket) -> None:
         try:
             payload = json.loads(raw)
             query = payload.get("query", "")
+            route_type = payload.get("route_type", "")
         except json.JSONDecodeError:
             query = raw
+            route_type = ""
 
         if not query:
             await ws.send_text(json.dumps({"type": "error", "data": "empty query"}))
@@ -107,20 +107,10 @@ async def supervisor_ws(ws: WebSocket) -> None:
         streamer = Streamer(ws)
         token = _current_streamer.set(streamer)
         try:
-            initial_state: AgentState = {
-                "messages": [HumanMessage(content=query)],
-                "route_type": "",
-                "plan": [],
-                "next_agent": "",
-                "tool_calls": [],
-                "context_data": {},
-                "error_count": {},
-                "feedback": "",
-            }
             try:
-                await nodes.supervisor_node(initial_state)
+                await run_graph(query, route_type)
             except Exception:
-                logger.exception("supervisor_node failed inside WS handler")
+                logger.exception("graph run failed inside WS handler")
                 await streamer.send_done(reason="exception")
             else:
                 await streamer.send_done()
