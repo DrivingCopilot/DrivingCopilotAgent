@@ -101,8 +101,10 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     sql_err = error_count.get("sql", 0)
     
     if timeout_err >= 2 or param_err >= 2 or sql_err >= 3:
-        fallback_msg = AIMessage(content="시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)")
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
+        fallback_text = "시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)"
+        fallback_msg = AIMessage(content=fallback_text)
+        await websocket_manager.send_status(json.dumps({"type": "text", "data": fallback_text}))
+        await websocket_manager.send_status(json.dumps({"type": "done", "reason": "error_limit"}))
         return {
             "messages": [fallback_msg],
             "next_agent": "__end__",
@@ -178,17 +180,21 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
         
         await websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
+        await websocket_manager.send_status(json.dumps({"type": "done", "reason": "parse_error"}))
         return {
             "error_count": updated_error_count,
             "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
-            "next_agent": "supervisor" 
+            "next_agent": "supervisor"
         }
     except Exception as e:
          logger.error(f"Unexpected error during LLM invocation: {e}")
+         await websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error"}))
          return {"next_agent": "__end__"}
         
     await websocket_manager.send_status(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
-    
+    if next_agent == "__end__":
+        await websocket_manager.send_status(json.dumps({"type": "done"}))
+
     # AgentState 업데이트 시 messages 리스트에 수퍼바이저의 판단 결과(reasoning)를 AIMessage 형태로 추가
     result = {
         "plan": new_plan,
@@ -197,5 +203,5 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     }
     if reasoning:
         result["messages"] = [AIMessage(content=reasoning)]
-        
+
     return result

@@ -32,3 +32,42 @@ DrivingCopilotAgent/
 ├── main.py                 # 서비스 실행 진입점 (FastAPI/Uvicorn)
 ├── requirements.txt        # 의존성 패키지 목록
 └── README.md               # 프로젝트 매뉴얼 및 구조 가이드
+```
+
+## 🚀 실행 방법
+
+Supervisor 에이전트는 백엔드(`DrivingCopilotBackend`, port 8000)와 분리된 별도 프로세스로 동작합니다.
+
+```bash
+# 1. 의존성 설치
+pip install -r requirements.txt
+
+# 2. supervisor 서버 실행 (port 8001)
+uvicorn main:app --reload --port 8001
+# 또는
+python main.py
+```
+
+### 서비스 포트 매핑
+
+| 서비스 | 포트 | 비고 |
+|---|---|---|
+| `DrivingCopilotFrontend` (React) | 3000 | |
+| `DrivingCopilotBackend` (FastAPI) | 8000 | 프론트엔드의 진입점, supervisor 를 호출 |
+| `DrivingCopilotAgent` (Supervisor) | 8001 | LangGraph supervisor 노드, 본 레포 |
+| Qdrant | 6333 | Vector RAG |
+
+### 엔드포인트
+
+- `GET  /` — 서비스 메타정보
+- `GET  /health` — 헬스체크
+- `POST /invoke` — 단발성 supervisor 호출 (백엔드 → supervisor)
+- `WS   /ws` — 실시간 토큰 스트리밍 (supervisor 내부 상태/토큰을 클라이언트에 전송)
+
+### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `AGENT_HOST` | `0.0.0.0` | supervisor 바인딩 호스트 |
+| `AGENT_PORT` | `8001` | supervisor 포트 |
+| `BACKEND_URL` | `http://localhost:8000` | 백엔드 위치 (server-to-server 호출용) |
