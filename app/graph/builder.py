@@ -7,8 +7,10 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
 
 흐름:
     START → supervisor → [knowledge | execution | perception | supervisor | END]
-                ↑               |           |            |
-                └───────────────┴───────────┴────────────┘
+                ↑               ↓             ↓              ↓
+             observe ←──────────┴─────────────┴──────────────┘
+                ↓
+          [supervisor | END]
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.nodes import supervisor_node
+from app.agent.observe import observe_node
 from app.agent.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -48,13 +51,22 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     # }
 
     return {
+        "tool_calls": [
+            *state.get("tool_calls", []),
+            {
+                "tool": "mock_knowledge_search",
+                "params": {},
+                "status": "success",
+                "result": "[Mock] 검색 완료",
+            },
+        ],
         # 이거 보니까 잘못 덮어쓰면 vehicle_state채우다가 vector_results까지 덮어씌워질 수 있음.
         "context_data": {
             **state.get("context_data", {}), # 기존 context_data에다가 나머지를 병합하는 형태로 코드를 짜야함.
             # **a = 딕셔너리를 그 자리에 풀어 펼치는거임.
             "vector_results": ["[Mock] 매뉴얼 청크 1", "[Mock] 매뉴얼 청크 2"],
             "graph_results": ["[Mock] 엔진경고등 → 점화플러그 → 교체주기"],
-        }
+        },
     }
 
 async def execution_node(state: AgentState) -> Dict[str, Any]:
@@ -79,7 +91,15 @@ async def execution_node(state: AgentState) -> Dict[str, Any]:
     # }
 
     return {
-        "tool_calls": [{"tool": "mock_tool", "status": "success", "result": "[Mock] Tool 실행 완료"}],
+        "tool_calls": [
+            *state.get("tool_calls", []),
+            {
+                "tool": "mock_execution_tool",
+                "params": {},
+                "status": "success",
+                "result": "[Mock] Tool 실행 완료",
+            },
+        ],
         "context_data": {
             **state.get("context_data", {}),
             "vehicle_state": {"mock_key": "mock_value"},
@@ -100,10 +120,19 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
     # 동일하게 하면 됨
 
     return {
+        "tool_calls": [
+            *state.get("tool_calls", []),
+            {
+                "tool": "mock_vision_analysis",
+                "params": {},
+                "status": "success",
+                "result": "[Mock] Vision 분석 완료",
+            },
+        ],
         "context_data": {
             **state.get("context_data", {}),
             "vision_results": ["[Mock] 비 감지됨", "[Mock] 창문 열림 감지"],
-        }
+        },
     }
 
 
@@ -125,6 +154,23 @@ def route_next(state: AgentState) -> str:
         return next_agent
 
     logger.info("route_next: → __end__")
+    return "__end__"
+
+
+def route_after_observe(state: AgentState) -> str:
+    """
+    observe_node 가 반환한 next_agent 값을 보고 다음을 결정.
+
+    Returns:
+        "supervisor" | "__end__"
+    """
+    next_agent = state.get("next_agent", "__end__")
+
+    if next_agent == "supervisor":
+        logger.info("route_after_observe: → supervisor")
+        return "supervisor"
+
+    logger.info("route_after_observe: → __end__")
     return "__end__"
 
 
@@ -150,6 +196,7 @@ def build_graph():
     graph.add_node("knowledge", knowledge_node)
     graph.add_node("execution", execution_node)
     graph.add_node("perception", perception_node)
+    graph.add_node("observe", observe_node)
 
     # 2. 시작 엣지
     # TODO: Query Router 구현 후 START → query_router → supervisor 로 교체
@@ -168,10 +215,20 @@ def build_graph():
         },
     )
 
-    # 4. 각 Agent → supervisor 복귀 (루프)
-    graph.add_edge("knowledge", "supervisor")
-    graph.add_edge("execution", "supervisor")
-    graph.add_edge("perception", "supervisor")
+    # 4. 각 Agent → observe (실행 결과 검증)
+    graph.add_edge("knowledge", "observe")
+    graph.add_edge("execution", "observe")
+    graph.add_edge("perception", "observe")
+
+    # 5. observe → [supervisor | __end__] 조건부 분기
+    graph.add_conditional_edges(
+        "observe",
+        route_after_observe,
+        {
+            "supervisor": "supervisor",
+            "__end__": END,
+        },
+    )
 
     return graph.compile()
 
@@ -208,7 +265,8 @@ async def run_graph(user_message: str, route_type: str = "") -> AgentState:
     }
 
     logger.info(f"run_graph 시작: {user_message!r} | route_type={route_type!r}")
-    result = await app.ainvoke(initial_state)
+    # recursion_limit: 무한 루프 안전망 (ReAct 루프 + observe 재시도 고려)
+    result = await app.ainvoke(initial_state, config={"recursion_limit": 25})
     logger.info("run_graph 완료")
 
     return result

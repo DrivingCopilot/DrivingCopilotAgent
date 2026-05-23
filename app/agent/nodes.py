@@ -73,6 +73,16 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
    - "plan": A list of step-by-step strings for the execution plan.
    - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
+
+[Error Recovery Protocol]
+When a 'Reflexion Feedback' indicates a tool failure, choose the recovery strategy based on the error_type:
+
+- error_type='timeout': The tool call timed out. Retry with the SAME tool and SAME parameters. The failure is likely transient.
+- error_type='parameter': The tool was correct but parameters were invalid. Retry with the SAME tool but FIX the parameters based on the error message.
+- error_type='invalid_tool': The tool itself was wrong for this task. Choose a DIFFERENT tool. Do not call the same tool again.
+- error_type='sql': SQL generation failed against the database. Re-examine the schema and regenerate a corrected SQL query. Use the same 'knowledge' agent with a corrected SQL.
+
+Always include your error_recovery reasoning in the 'reasoning' field of your JSON output when responding to a failure.
 """
 
 async def supervisor_node(state: AgentState) -> Dict[str, Any]:
@@ -94,22 +104,6 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     feedback = state.get("feedback", "")
     route_type = state.get("route_type", "")
     current_next_agent = state.get("next_agent", "")
-    
-    # 2. 에러 횟수 초과에 따른 하드 Fallback
-    timeout_err = error_count.get("timeout", 0)
-    param_err = error_count.get("parameter", 0)
-    sql_err = error_count.get("sql", 0)
-    
-    if timeout_err >= 2 or param_err >= 2 or sql_err >= 3:
-        fallback_text = "시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)"
-        fallback_msg = AIMessage(content=fallback_text)
-        await websocket_manager.send_status(json.dumps({"type": "text", "data": fallback_text}))
-        await websocket_manager.send_status(json.dumps({"type": "done", "reason": "error_limit"}))
-        return {
-            "messages": [fallback_msg],
-            "next_agent": "__end__",
-            "plan": []
-        }
     
     # 수퍼바이저 전용 모델 고정 (G1 비용 최적화 준수)
     llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1) 
