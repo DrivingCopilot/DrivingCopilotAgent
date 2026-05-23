@@ -4,6 +4,9 @@ from typing import Any, Dict
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI 
 from .state import AgentState
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
 
 logger = logging.getLogger(__name__)
 
@@ -199,3 +202,9 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         result["messages"] = [AIMessage(content=reasoning)]
         
     return result
+
+
+
+async def knowledge_node(state: AgentState) -> Dict[str, Any]:
+    await websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent processing..."}))
+    
