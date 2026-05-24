@@ -20,7 +20,6 @@ class InvokeRequest(BaseModel):
     query: str = Field(..., description="사용자 발화 또는 백엔드가 전달하는 작업 지시")
     route_type: str = Field("", description="rag/tool/sql/vision/chat 등 백엔드 라우터가 사전 분류한 결과")
 
-
 class InvokeResponse(BaseModel):
     plan: List[Any]
     next_agent: str
