@@ -24,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent.nodes import supervisor_node
 from app.agent.observe import observe_node
+from app.agent.perception import perception_node
 from app.agent.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,6 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     (Vector RAG / Graph RAG / Text2SQL)
     """
     logger.info("knowledge_node: Mock 실행")
-
-    # from app.agents.knowledge import run_knowledge
-    # return await run_knowledge(state)
-    # 나중에 state 반환해서 넣을때도 밑의 작업 해줘야 할듯
-    # return {
-    # "context_data": {
-    #     **state.get("context_data", {}),
-    #     **await run_knowledge(state),  # 바로 펼칠 수 있음
-    # }
 
     return {
         "tool_calls": [
@@ -75,16 +67,6 @@ async def execution_node(state: AgentState) -> Dict[str, Any]:
 
     # from app.agents.execution import run_execution
     # execution_result =  await run_execution(state)
-    # return {
-    #     "context_data": {
-    #         **state.get("context_data", {}),
-    #         **execution_result["context_data"],
-    #     },
-    #     "tool_calls": [
-    #         *state.get("tool_calls", []),
-    #         *execution_result["tool_calls"],
-    #     ]
-    # }
 
     return {
         "tool_calls": [
@@ -100,32 +82,6 @@ async def execution_node(state: AgentState) -> Dict[str, Any]:
         },
     }
 
-
-async def perception_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Perception Agent Mock.
-    추후 app/agents/perception.py 실제 로직으로 교체.
-    (Qwen2-VL Vision 분석)
-    """
-    logger.info("perception_node: Mock 실행")
-
-    # from app.agents.perception import run_perception
-    # return await run_perception(state)
-    # 동일하게 하면 됨
-
-    return {
-        "tool_calls": [
-            {
-                "tool": "mock_vision_analysis",
-                "params": {},
-                "status": "success",
-                "result": "[Mock] Vision 분석 완료",
-            },
-        ],
-        "context_data": {
-            "vision_results": ["[Mock] 비 감지됨", "[Mock] 창문 열림 감지"],
-        },
-    }
 
 
 # ---------------------------------------------------------------------------

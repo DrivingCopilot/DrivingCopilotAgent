@@ -12,7 +12,7 @@ from app.agent.nodes import websocket_manager
 
 logger = logging.getLogger(__name__)
 
-# 계획서 5절 표 — 외부 계약, 수치·키 변경 금지
+# 계획서 조건
 MAX_RETRY: Dict[str, int] = {
     "timeout": 2,
     "parameter": 2,
@@ -55,7 +55,7 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
     logger.debug("observe: classification=%s error_type=%s", classification, error_type)
 
     if classification in ("empty", "success"):
-        return {"next_agent": "supervisor", "feedback": ""}
+        return {"next_agent": "supervisor", "feedback": ""} 
 
     if classification == "unknown":
         return {
@@ -63,18 +63,20 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
             "feedback": "Observe: unknown tool_call status — forwarding to supervisor.",
         }
 
-    # classification == "fail"
+    # 마지막으로 실행한 툴 call의 결과
     last = tool_calls[-1]
     tool_name: str = last.get("tool", "unknown")
     error_msg: str = last.get("error_msg", "")
     limit: int = MAX_RETRY[error_type]
 
+    # 오류 카운트 증가
     error_count[error_type] = error_count.get(error_type, 0) + 1
-    count: int = error_count[error_type]
+    count: int = error_count[error_type] 
     logger.info(
         "observe: tool='%s' error_type='%s' count=%d/%d", tool_name, error_type, count, limit
     )
 
+    # 해당 오류의 카운트(증가한 후)가 기준을 넘어섰는지
     if count >= limit:
         logger.warning(
             "observe: retry limit reached — tool='%s' error_type='%s' %d/%d",
@@ -85,7 +87,6 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
             f"최대 재시도 횟수({limit}회)에 도달했습니다. 요청을 처리할 수 없습니다."
         )
 
-        # WS 송신: 프론트엔드에 종료 통지 (supervisor 원본 하드 Fallback 일관성)
         await websocket_manager.send_status(
             json.dumps({"type": "text", "data": user_msg})
         )

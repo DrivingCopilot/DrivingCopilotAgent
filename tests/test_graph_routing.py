@@ -80,8 +80,18 @@ async def test_react_one_loop_perception(patch_supervisor):
     result = await run_graph("주변 상황 보여줘")
 
     assert tracker["count"] == 2
-    assert any(tc["tool"] == "mock_vision_analysis" for tc in result["tool_calls"])
+
+    # Tool 2종 모두 호출되어야 함
+    tool_names = [tc["tool"] for tc in result["tool_calls"]]
+    assert "analyze_camera_feed" in tool_names
+    assert "detect_objects" in tool_names
+
+    # vision_results는 구조화된 dict
     assert "vision_results" in result["context_data"]
+    vision = result["context_data"]["vision_results"]
+    assert "scene" in vision
+    assert "objects" in vision
+    assert vision["scene"]["weather"] == "rain"  # mock scenario 확인
 
 
 @pytest.mark.asyncio

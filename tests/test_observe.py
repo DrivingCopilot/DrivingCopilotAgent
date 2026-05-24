@@ -9,7 +9,7 @@ from app.agent.observe import observe_node, _classify_last_tool, MAX_RETRY
 
 
 # ---------------------------------------------------------------------------
-# _classify_last_tool
+# _classify_last_tool 테스트(6)
 # ---------------------------------------------------------------------------
 
 def test_classify_empty():
@@ -45,7 +45,7 @@ def test_classify_unrecognised_status():
 
 
 # ---------------------------------------------------------------------------
-# observe_node
+# observe_node 테스트(13)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
