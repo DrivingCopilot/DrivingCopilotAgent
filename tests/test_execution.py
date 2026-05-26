@@ -23,7 +23,6 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 # ---------------------------------------------------------------------------
 # 공통 픽스처
@@ -54,23 +53,22 @@ def _make_state(
 
 def _mock_llm(response_content: str):
     """
-    ChatOpenAI 클래스 자체를 mock 하는 컨텍스트 매니저 반환.
-    생성자 호출(OPENAI_API_KEY 검증)을 우회한다.
+    _EXTRACTION_LLM 모듈 변수 자체를 MagicMock 으로 교체하는 컨텍스트 매니저 반환.
+    ChatOpenAI 는 Pydantic 모델이라 인스턴스 속성을 직접 patch 할 수 없으므로,
+    모듈 변수를 통째로 교체해 _get_extraction_llm() 이 mock 을 반환하게 한다.
     """
     mock_response = MagicMock()
     mock_response.content = response_content
 
-    mock_llm_instance = MagicMock()
-    mock_llm_instance.ainvoke = AsyncMock(return_value=mock_response)
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
 
-    mock_llm_cls = MagicMock(return_value=mock_llm_instance)
-    return patch("app.agents.execution.ChatOpenAI", mock_llm_cls)
+    return patch("app.agents.execution._EXTRACTION_LLM", new=mock_llm)
 
 
 class TestExtractToolCall:
     """_extract_tool_call: LLM 응답을 파싱해 tool 이름/파라미터를 추출하는지 확인."""
 
-    @pytest.mark.asyncio
     async def test_valid_tool_extraction(self):
         """정상 LLM 응답 → 올바른 tool_name / params 반환."""
         payload = json.dumps({
@@ -86,7 +84,6 @@ class TestExtractToolCall:
         assert result["params"]["temperature"] == 22
         assert result["params"]["on"] is True
 
-    @pytest.mark.asyncio
     async def test_no_tool_returns_none(self):
         """tool_name: null 응답 → None 반환."""
         payload = json.dumps({"tool_name": None, "params": {}})
@@ -96,7 +93,6 @@ class TestExtractToolCall:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_malformed_json_returns_none(self):
         """LLM 이 JSON 이 아닌 텍스트 반환 → None 반환 (파싱 실패 시 안전 처리)."""
         with _mock_llm("죄송합니다, 잘 모르겠습니다."):
@@ -105,7 +101,6 @@ class TestExtractToolCall:
 
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_code_block_stripped(self):
         """LLM 이 ```json ... ``` 코드 블록으로 감싸서 반환해도 정상 파싱."""
         raw = '```json\n{"tool_name": "control_wiper", "params": {"on": true}}\n```'
@@ -120,7 +115,6 @@ class TestExtractToolCall:
 class TestCallWithRetry:
     """_call_with_retry: 타임아웃·파라미터 오류 retry 로직 검증."""
 
-    @pytest.mark.asyncio
     async def test_success_on_first_try(self):
         """첫 호출 성공 → 즉시 반환, error_count 변경 없음."""
         with patch(
@@ -144,7 +138,6 @@ class TestCallWithRetry:
         assert "22℃" in result
         assert error_count == {}  # 에러 없음
 
-    @pytest.mark.asyncio
     async def test_timeout_retry_twice_then_error(self):
         """TimeoutError 2회 발생 → error_count["timeout"] == 2, 최종 status == "error"."""
         with patch(
@@ -170,7 +163,6 @@ class TestCallWithRetry:
         assert error_count.get("timeout", 0) == 2
         assert "[timeout]" in result
 
-    @pytest.mark.asyncio
     async def test_param_error_retry_twice_then_error(self):
         """파라미터 오류 2회 발생 → error_count["parameter"] == 2, 최종 status == "error"."""
         with patch(
@@ -193,7 +185,6 @@ class TestCallWithRetry:
         assert error_count.get("parameter", 0) == 2
         assert "[param_error]" in result
 
-    @pytest.mark.asyncio
     async def test_unknown_error_returns_immediately(self):
         """일반 예외 → retry 없이 즉시 error 반환, error_count 변경 없음."""
         with patch(
@@ -221,7 +212,6 @@ class TestCallWithRetry:
 class TestRunExecution:
     """run_execution: 상태 병합, WS 토큰 송출, 다양한 시나리오 통합 검증."""
 
-    @pytest.mark.asyncio
     async def test_tool_calls_accumulated(self):
         """기존 tool_calls 에 새 결과가 누적되는지 확인."""
         state = _make_state(
@@ -251,7 +241,6 @@ class TestRunExecution:
         assert tool_calls[1]["tool"] == "control_climate"
         assert tool_calls[1]["status"] == "success"
 
-    @pytest.mark.asyncio
     async def test_vehicle_state_updated_on_success(self):
         """tool 성공 시 vehicle_state 에 last_{tool_name} 키가 생성되는지 확인."""
         state = _make_state(plan=["와이퍼를 켠다"])
@@ -275,7 +264,6 @@ class TestRunExecution:
         vehicle_state = result["context_data"]["vehicle_state"]
         assert vehicle_state.get("last_control_wiper") == "와이퍼를 켰습니다."
 
-    @pytest.mark.asyncio
     async def test_ws_tokens_emitted(self):
         """tool_start / tool_result 토큰이 WS 로 송출되는지 확인."""
         state = _make_state(plan=["창문을 연다"])
@@ -307,7 +295,6 @@ class TestRunExecution:
         assert "tool_start" in types
         assert "tool_result" in types
 
-    @pytest.mark.asyncio
     async def test_unknown_tool_skipped_after_retry(self):
         """알 수 없는 tool 이름 추출 시 재추출 실패 → skip (tool_calls 에 추가 안 됨)."""
         state = _make_state(plan=["알 수 없는 작업"])
@@ -326,7 +313,6 @@ class TestRunExecution:
 
         assert result["tool_calls"] == []
 
-    @pytest.mark.asyncio
     async def test_empty_plan_returns_no_tool_calls(self):
         """plan 이 비어 있으면 tool_calls 변화 없음."""
         state = _make_state(plan=[])
@@ -337,7 +323,6 @@ class TestRunExecution:
 
         assert result["tool_calls"] == []
 
-    @pytest.mark.asyncio
     async def test_error_count_propagated(self):
         """timeout 누적 후 error_count 가 state 에 반영되는지 확인."""
         state = _make_state(
@@ -360,7 +345,6 @@ class TestRunExecution:
         # 이미 1회 + 이번 2회 = 최대 2회까지 누적
         assert result["error_count"].get("timeout", 0) >= 2
 
-    @pytest.mark.asyncio
     async def test_get_vehicle_status_updates_last_status_report(self):
         """get_vehicle_status 성공 시 last_status_report 키로 vehicle_state 갱신."""
         state = _make_state(plan=["차량 상태를 조회한다"])
@@ -385,7 +369,6 @@ class TestRunExecution:
         assert "last_status_report" in vehicle_state
         assert "60km/h" in vehicle_state["last_status_report"]
 
-    @pytest.mark.asyncio
     async def test_context_data_preserved(self):
         """기존 context_data(vector_results 등)가 덮어씌워지지 않는지 확인."""
         state = _make_state(
@@ -430,7 +413,6 @@ class TestRunExecutionIntegration:
         pytest tests/test_execution.py -m integration -v
     """
 
-    @pytest.mark.asyncio
     async def test_get_vehicle_status_real(self):
         """실 MCP 서버로 get_vehicle_status 호출 — 차량 상태 문자열 반환 확인."""
         from app.agents.execution import _call_mcp_tool_raw
@@ -441,7 +423,6 @@ class TestRunExecutionIntegration:
         # 응답에 차량 상태 관련 키워드가 포함되어야 함
         assert any(kw in result_text for kw in ("속도", "연료", "배터리", "km/h"))
 
-    @pytest.mark.asyncio
     async def test_control_climate_real(self):
         """실 MCP 서버로 control_climate 호출 — 성공 메시지 반환 확인."""
         from app.agents.execution import _call_mcp_tool_raw
@@ -453,7 +434,6 @@ class TestRunExecutionIntegration:
         assert status == "success"
         assert "24" in result_text or "에어컨" in result_text
 
-    @pytest.mark.asyncio
     async def test_control_wiper_real(self):
         """실 MCP 서버로 control_wiper 호출."""
         from app.agents.execution import _call_mcp_tool_raw
@@ -463,7 +443,6 @@ class TestRunExecutionIntegration:
         assert status == "success"
         assert "와이퍼" in result_text
 
-    @pytest.mark.asyncio
     async def test_all_12_tools_callable(self):
         """12종 tool 모두 호출 가능 (파라미터 최솟값으로)."""
         from app.agents.execution import _call_mcp_tool_raw, MCP_TOOLS

@@ -89,6 +89,19 @@ Rules:
 - Do NOT output anything outside the JSON object.
 """
 
+# 모듈 레벨 싱글턴 — plan step마다 새 인스턴스를 만들지 않는다.
+# None 으로 시작하는 lazy init: import 시점에 API key 검증을 하지 않는다.
+# TODO: 로컬 qwen2-vl 서버 기동 후 base_url 추가
+_EXTRACTION_LLM: Optional[ChatOpenAI] = None
+
+
+def _get_extraction_llm() -> ChatOpenAI:
+    """_EXTRACTION_LLM 싱글턴을 반환한다. 최초 호출 시 생성된다."""
+    global _EXTRACTION_LLM
+    if _EXTRACTION_LLM is None:
+        _EXTRACTION_LLM = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
+    return _EXTRACTION_LLM
+
 # ---------------------------------------------------------------------------
 # MCP 클라이언트 헬퍼
 # ---------------------------------------------------------------------------
@@ -216,18 +229,16 @@ async def _extract_tool_call(plan_step: str) -> Optional[Dict[str, Any]]:
     supervisor 가 만든 plan 의 단일 스텝 문자열에서
     MCP tool 이름과 파라미터를 추출한다.
 
-    LLM(qwen2-vl-7b) 에게 구조화된 JSON 출력을 요청한다.
+    LLM 에게 구조화된 JSON 출력을 요청한다.
     파싱에 실패하면 None 반환.
     """
-    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.0)
-
     messages = [
         SystemMessage(content=_EXTRACTION_SYSTEM_PROMPT),
         HumanMessage(content=f"Task: {plan_step}"),
     ]
 
     try:
-        response = await llm.ainvoke(messages)
+        response = await _get_extraction_llm().ainvoke(messages)
         raw = response.content.strip()
 
         # ``` 코드 블록 제거

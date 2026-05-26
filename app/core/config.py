@@ -52,7 +52,7 @@ ALLOWED_ORIGINS = [
 # ---------------------------------------------------------------------------
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_BACKEND_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../../../../DrivingCopilotBackend"))
+_BACKEND_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../../../DrivingCopilotBackend"))
 
 # MCP 서버를 실행할 Python 인터프리터
 # Backend venv 가 있으면 그걸 사용, 없으면 시스템 python3 폴백
