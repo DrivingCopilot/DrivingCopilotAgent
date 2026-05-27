@@ -2,8 +2,9 @@ import json
 import logging
 from typing import Any, Dict
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI 
+from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .observe import MAX_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -170,14 +171,29 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Qwen2-VL response as JSON: {e}. Raw content: {content}")
-        updated_error_count = dict(error_count) 
+        updated_error_count = dict(error_count)
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
-        
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
-        await websocket_manager.send_status(json.dumps({"type": "done", "reason": "parse_error"}))
+        count = updated_error_count["parameter"]
+        limit = MAX_RETRY.get("parameter", 2)
+
+        if count >= limit:
+            logger.error(f"Supervisor JSON parse retry limit exceeded: {count}/{limit}")
+            user_msg = (
+                f"JSON 생성에 {count}회 실패했습니다. 요청을 처리할 수 없습니다."
+            )
+            await websocket_manager.send_status(json.dumps({"type": "text", "data": user_msg}))
+            await websocket_manager.send_status(json.dumps({"type": "done", "reason": "parse_error_limit"}))
+            return {
+                "error_count": updated_error_count,
+                "feedback": f"Supervisor JSON parse failed {count}/{limit} times. Stopping.",
+                "next_agent": "__end__",
+                "messages": [AIMessage(content=user_msg)]
+            }
+
+        await websocket_manager.send_status(json.dumps({"type": "status", "data": f"JSON 생성 재시도 중... ({count}/{limit})"}))
         return {
             "error_count": updated_error_count,
-            "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
+            "feedback": f"Failed to parse response as valid JSON (attempt {count}/{limit}). Error: {str(e)}",
             "next_agent": "supervisor"
         }
     except Exception as e:
