@@ -9,16 +9,9 @@ from langchain_core.messages import AIMessage
 
 from app.agent.state import AgentState
 from app.agent.nodes import websocket_manager
+from app.core.config import MAX_RETRY
 
 logger = logging.getLogger(__name__)
-
-# 계획서 조건
-MAX_RETRY: Dict[str, int] = {
-    "timeout": 2,
-    "parameter": 2,
-    "invalid_tool": 1,
-    "sql": 3,
-}
 
 
 def _classify_last_tool(tool_calls: list[dict]) -> tuple[str, str | None]:
@@ -108,5 +101,5 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
         "feedback": (
             f"Tool '{tool_name}' failed with error_type='{error_type}' ({count}/{limit}). "
             f"Error: {error_msg}. Please adjust your plan and try again."
-        ),
+        ), 
     }

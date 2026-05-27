@@ -1,3 +1,5 @@
+from typing import Dict
+
 # app/core/config.py
 #
 # 프로젝트 전역 설정 상수 관리 모듈.
@@ -46,3 +48,14 @@ ALLOWED_ORIGINS = [
     "http://localhost:3000",   # React frontend
     "http://localhost:8000",   # FastAPI backend (server-to-server 호출용)
 ]
+
+# ---------------------------------------------------------------------------
+# Observe 노드 재시도 정책 (계획서 5절)
+# ---------------------------------------------------------------------------
+
+MAX_RETRY: Dict[str, int] = {
+    "timeout": 2,
+    "parameter": 2,
+    "invalid_tool": 1,
+    "sql": 3,
+}
