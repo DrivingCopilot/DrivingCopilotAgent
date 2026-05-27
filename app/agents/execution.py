@@ -6,18 +6,17 @@ Execution Agent — supervisor 의 plan 을 받아 MCP 12종 Tool 을 호출한�
 흐름:
     supervisor (next_agent=execution) → execution_node(state)
         ├ supervisor 의 plan 에서 호출할 MCP tool/parameter 추출  (LLM 보조)
-        ├ MCP 서버(stdio) 호출 — 12종 tool
+        ├ MCP 서버(stdio) 단일 호출 — 12종 tool
         ├ 결과를 state.tool_calls 에 누적, vehicle_state 갱신
-        └ supervisor 로 복귀
+        └ observe_node 로 복귀
 
-실패 처리 (계획서 6장):
-    - TimeoutError  : 2회 retry → error_count["timeout"]  누적
-    - 파라미터 오류 : 2회 retry → error_count["parameter"] 누적
-    - 잘못된 Tool   : 1회 재추출 재시도
+실패 처리 — observe_node 에게 위임 (ReAct Observe 단계 책임 분리):
+    실패 시 error_type / error_msg 를 tool_calls 에 담아 반환.
+    재시도 횟수 누적 · 종료 판단은 observe_node 의 단독 책임.
 
 WS 토큰 (계획서 표준):
     {"type": "tool_start",  "data": {"tool_name": "...", "params": {...}}}
-    {"type": "tool_result", "data": {"tool_name": "...", "result": "...", "status": "success"|"error"}}
+    {"type": "tool_result", "data": {"tool_name": "...", "result": "...", "status": "success"|"fail"}}
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -102,6 +101,7 @@ def _get_extraction_llm() -> ChatOpenAI:
         _EXTRACTION_LLM = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.0)
     return _EXTRACTION_LLM
 
+
 # ---------------------------------------------------------------------------
 # MCP 클라이언트 헬퍼
 # ---------------------------------------------------------------------------
@@ -134,90 +134,48 @@ async def _call_mcp_tool_raw(tool_name: str, params: Dict[str, Any]) -> Tuple[st
             return str(content), "success"
 
 
-# WsSend 타입 — websocket_manager.send_status 와 동일 시그니처
-_WsSend = Callable[[str], Coroutine[Any, Any, None]]
-
-
-async def _call_with_retry(
+async def _call_mcp_tool_once(
     tool_name: str,
     params: Dict[str, Any],
-    error_count: Dict[str, int],
-    ws_send: _WsSend,
-) -> Tuple[str, str]:
+) -> Tuple[str, str, str, str]:
     """
-    MCP tool 호출 + 계획서 6장 실패 처리.
+    단일 MCP tool 호출. retry 없음 — 재시도 결정은 observe_node 책임.
 
-    - TimeoutError  : MCP_TOOL_TIMEOUT 초 초과 시 최대 2회 retry
-                      → error_count["timeout"] 누적
-    - 파라미터 오류 : validation/field/parameter 키워드 포함 예외 시 최대 2회 retry
-                      → error_count["parameter"] 누적
-    - 기타 예외     : 1회 즉시 반환 (error 상태)
+    예외를 잡아 error_type 으로 분류한 뒤 반환한다.
+    observe_node 가 error_type 을 읽어 재시도 횟수를 관리한다.
 
     Returns:
-        (result_text, status)
+        (result_text, status, error_type, error_msg)
+        - status    : "success" | "fail"
+        - error_type: "" | "timeout" | "parameter"  (fail 시에만 의미 있음)
+        - error_msg : 원본 에러 메시지               (fail 시에만 의미 있음)
     """
-    MAX_TIMEOUT_RETRY = 2
-    MAX_PARAM_RETRY = 2
+    try:
+        result_text, raw_status = await asyncio.wait_for(
+            _call_mcp_tool_raw(tool_name, params),
+            timeout=MCP_TOOL_TIMEOUT,
+        )
+        # MCP 서버가 isError 응답을 보낸 경우 → parameter 오류로 분류
+        if raw_status == "error":
+            logger.warning("MCP tool returned error: %s — %s", tool_name, result_text)
+            return result_text, "fail", "parameter", result_text
 
-    timeout_tries = 0
-    param_tries = 0
+        return result_text, "success", "", ""
 
-    while True:
-        try:
-            result_text, status = await asyncio.wait_for(
-                _call_mcp_tool_raw(tool_name, params),
-                timeout=MCP_TOOL_TIMEOUT,
-            )
-            return result_text, status
+    except asyncio.TimeoutError:
+        error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
+        logger.warning("MCP timeout: %s", tool_name)
+        return error_msg, "fail", "timeout", error_msg
 
-        except asyncio.TimeoutError:
-            timeout_tries += 1
-            error_count["timeout"] = error_count.get("timeout", 0) + 1
-            logger.warning(
-                "MCP timeout (%d/%d): %s", timeout_tries, MAX_TIMEOUT_RETRY, tool_name
-            )
-            await ws_send(
-                json.dumps({
-                    "type": "status",
-                    "data": f"Tool '{tool_name}' 타임아웃 ({timeout_tries}/{MAX_TIMEOUT_RETRY})",
-                })
-            )
-            if timeout_tries >= MAX_TIMEOUT_RETRY:
-                return (
-                    f"[timeout] '{tool_name}' 호출 실패 ({MAX_TIMEOUT_RETRY}회 초과)",
-                    "error",
-                )
-            await asyncio.sleep(0.5)
-
-        except Exception as exc:
-            err_msg = str(exc).lower()
-            is_param_error = any(
-                kw in err_msg
-                for kw in ("validation", "parameter", "invalid", "field", "required")
-            )
-
-            if is_param_error:
-                param_tries += 1
-                error_count["parameter"] = error_count.get("parameter", 0) + 1
-                logger.warning(
-                    "MCP param error (%d/%d): %s — %s",
-                    param_tries, MAX_PARAM_RETRY, tool_name, exc,
-                )
-                await ws_send(
-                    json.dumps({
-                        "type": "status",
-                        "data": (
-                            f"Tool '{tool_name}' 파라미터 오류 "
-                            f"({param_tries}/{MAX_PARAM_RETRY}): {exc}"
-                        ),
-                    })
-                )
-                if param_tries >= MAX_PARAM_RETRY:
-                    return f"[param_error] '{tool_name}': {exc}", "error"
-                await asyncio.sleep(0.3)
-            else:
-                logger.error("MCP unexpected error: %s — %s", tool_name, exc)
-                return f"[error] '{tool_name}': {exc}", "error"
+    except Exception as exc:
+        err_str = str(exc)
+        is_param_error = any(
+            kw in err_str.lower()
+            for kw in ("validation", "parameter", "invalid", "field", "required")
+        )
+        error_type = "parameter" if is_param_error else "parameter"
+        logger.error("MCP unexpected error: %s — %s", tool_name, exc)
+        return f"[error] {err_str}", "fail", error_type, err_str
 
 
 # ---------------------------------------------------------------------------
@@ -268,22 +226,24 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
     Execution Agent 실 구현.
 
     1. supervisor 의 plan 에서 MCP tool/parameter 추출
-    2. MCP 서버 호출 (12종 tool, retry 포함)
+    2. MCP 서버 단일 호출 (12종 tool)
     3. tool_calls 누적 + vehicle_state 갱신
     4. tool_start / tool_result WS 토큰 송출
-    5. error_count 를 state 에 반영해 supervisor 의 하드 Fallback 판단에 활용
+
+    실패 시 error_type / error_msg 를 tool_calls 에 담아 반환.
+    error_count 관리 및 재시도 결정은 observe_node 의 책임이므로
+    이 함수는 error_count 를 읽거나 쓰지 않는다.
 
     Args:
         state: 현재 AgentState
 
     Returns:
-        state 에 병합할 딕셔너리 (tool_calls, context_data, error_count)
+        state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
-    # nodes.py 의 websocket_manager(또는 _StreamerProxy) 참조
+    # nodes.py 의 websocket_manager(또는 _StreamerProxy) 참조 — 지연 import
     from app.agent.nodes import websocket_manager
 
     plan: List[str] = state.get("plan", [])
-    error_count: Dict[str, int] = dict(state.get("error_count", {}))
     tool_calls_acc: List[Dict[str, Any]] = list(state.get("tool_calls", []))
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
     vehicle_state: Dict[str, Any] = dict(context_data.get("vehicle_state", {}))
@@ -329,12 +289,10 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         )
         logger.info("tool_start: %s params=%s", tool_name, tool_params)
 
-        # ── 4. MCP tool 호출 (retry 포함) ───────────────────────────────────
-        result_text, status = await _call_with_retry(
-            tool_name,
-            tool_params,
-            error_count,
-            ws_send=websocket_manager.send_status,
+        # ── 4. MCP tool 단일 호출 ────────────────────────────────────────────
+        #   retry 없음 — 재시도는 observe → supervisor 루프가 담당
+        result_text, status, error_type, error_msg = await _call_mcp_tool_once(
+            tool_name, tool_params
         )
 
         # ── 5. tool_result WS 토큰 ──────────────────────────────────────────
@@ -348,16 +306,25 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
                 },
             })
         )
-        logger.info("tool_result: %s status=%s", tool_name, status)
+        logger.info(
+            "tool_result: %s status=%s error_type=%s",
+            tool_name, status, error_type or "-",
+        )
 
-        new_tool_calls.append({
+        # ── 6. tool_calls 누적 ──────────────────────────────────────────────
+        tool_call: Dict[str, Any] = {
             "tool": tool_name,
             "params": tool_params,
             "result": result_text,
             "status": status,
-        })
+        }
+        if status == "fail":
+            tool_call["error_type"] = error_type
+            tool_call["error_msg"] = error_msg
 
-        # ── 6. vehicle_state 갱신 ────────────────────────────────────────────
+        new_tool_calls.append(tool_call)
+
+        # ── 7. vehicle_state 갱신 (성공 시에만) ─────────────────────────────
         if status == "success":
             if tool_name == "get_vehicle_status":
                 new_vehicle_state["last_status_report"] = result_text
@@ -366,12 +333,11 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
 
     logger.info("execution_node 완료: 신규 tool_calls %d 개", len(new_tool_calls))
 
-    # 이슈 지정 state 병합 패턴 준수
+    # error_count 반환 없음 — observe_node 가 단일 권위자
     return {
         "tool_calls": [*tool_calls_acc, *new_tool_calls],
         "context_data": {
             **context_data,
             "vehicle_state": new_vehicle_state,
         },
-        "error_count": error_count,
     }

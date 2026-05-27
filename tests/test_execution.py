@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # 공통 픽스처
 # ---------------------------------------------------------------------------
@@ -112,101 +113,91 @@ class TestExtractToolCall:
         assert result["tool_name"] == "control_wiper"
 
 
-class TestCallWithRetry:
-    """_call_with_retry: 타임아웃·파라미터 오류 retry 로직 검증."""
+class TestCallMcpToolOnce:
+    """
+    _call_mcp_tool_once: 단일 호출 + 예외 → error_type 매핑 검증.
+    retry 로직 없음 — 재시도는 observe_node 책임.
+    """
 
-    async def test_success_on_first_try(self):
-        """첫 호출 성공 → 즉시 반환, error_count 변경 없음."""
+    async def test_success(self):
+        """정상 호출 → status='success', error_type=''."""
         with patch(
             "app.agents.execution._call_mcp_tool_raw",
             new_callable=AsyncMock,
             return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success"),
         ):
-            from app.agents.execution import _call_with_retry
+            from app.agents.execution import _call_mcp_tool_once
 
-            error_count: Dict[str, int] = {}
-            ws_messages: list[str] = []
-
-            async def fake_ws(msg: str) -> None:
-                ws_messages.append(msg)
-
-            result, status = await _call_with_retry(
-                "control_climate", {"temperature": 22, "on": True}, error_count, fake_ws
+            result_text, status, error_type, error_msg = await _call_mcp_tool_once(
+                "control_climate", {"temperature": 22, "on": True}
             )
 
         assert status == "success"
-        assert "22℃" in result
-        assert error_count == {}  # 에러 없음
+        assert error_type == ""
+        assert error_msg == ""
+        assert "22℃" in result_text
 
-    async def test_timeout_retry_twice_then_error(self):
-        """TimeoutError 2회 발생 → error_count["timeout"] == 2, 최종 status == "error"."""
+    async def test_mcp_server_error_classified_as_parameter(self):
+        """MCP 서버가 isError 응답 → status='fail', error_type='parameter'."""
         with patch(
             "app.agents.execution._call_mcp_tool_raw",
             new_callable=AsyncMock,
-            side_effect=asyncio.TimeoutError,
+            return_value=("invalid temperature value", "error"),
         ):
-            # wait_for 도 패치: 항상 TimeoutError 발생
-            with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
-                from app.agents.execution import _call_with_retry
+            from app.agents.execution import _call_mcp_tool_once
 
-                error_count: Dict[str, int] = {}
-                ws_messages: list[str] = []
+            result_text, status, error_type, error_msg = await _call_mcp_tool_once(
+                "control_climate", {"temperature": 99}
+            )
 
-                async def fake_ws(msg: str) -> None:
-                    ws_messages.append(msg)
+        assert status == "fail"
+        assert error_type == "parameter"
+        assert error_msg != ""
 
-                result, status = await _call_with_retry(
-                    "control_climate", {"temperature": 22}, error_count, fake_ws
-                )
+    async def test_timeout_classified(self):
+        """TimeoutError → status='fail', error_type='timeout'."""
+        with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
+            from app.agents.execution import _call_mcp_tool_once
 
-        assert status == "error"
-        assert error_count.get("timeout", 0) == 2
-        assert "[timeout]" in result
+            result_text, status, error_type, error_msg = await _call_mcp_tool_once(
+                "control_climate", {}
+            )
 
-    async def test_param_error_retry_twice_then_error(self):
-        """파라미터 오류 2회 발생 → error_count["parameter"] == 2, 최종 status == "error"."""
+        assert status == "fail"
+        assert error_type == "timeout"
+        assert "타임아웃" in result_text
+
+    async def test_validation_exception_classified_as_parameter(self):
+        """'validation' 키워드 예외 → error_type='parameter'."""
         with patch(
             "asyncio.wait_for",
             new_callable=AsyncMock,
             side_effect=ValueError("validation error: field 'temperature'"),
         ):
-            from app.agents.execution import _call_with_retry
+            from app.agents.execution import _call_mcp_tool_once
 
-            error_count: Dict[str, int] = {}
-
-            async def fake_ws(msg: str) -> None:
-                pass
-
-            result, status = await _call_with_retry(
-                "control_climate", {"temperature": 99}, error_count, fake_ws
+            _, status, error_type, _ = await _call_mcp_tool_once(
+                "control_climate", {"temperature": 99}
             )
 
-        assert status == "error"
-        assert error_count.get("parameter", 0) == 2
-        assert "[param_error]" in result
+        assert status == "fail"
+        assert error_type == "parameter"
 
-    async def test_unknown_error_returns_immediately(self):
-        """일반 예외 → retry 없이 즉시 error 반환, error_count 변경 없음."""
+    async def test_unknown_exception_classified_as_parameter(self):
+        """예상치 못한 예외 → status='fail', error_type='parameter'."""
         with patch(
             "asyncio.wait_for",
             new_callable=AsyncMock,
             side_effect=RuntimeError("unexpected crash"),
         ):
-            from app.agents.execution import _call_with_retry
+            from app.agents.execution import _call_mcp_tool_once
 
-            error_count: Dict[str, int] = {}
-
-            async def fake_ws(msg: str) -> None:
-                pass
-
-            result, status = await _call_with_retry(
-                "control_climate", {}, error_count, fake_ws
+            _, status, error_type, _ = await _call_mcp_tool_once(
+                "control_climate", {}
             )
 
-        assert status == "error"
-        assert "[error]" in result
-        assert "timeout" not in error_count
-        assert "parameter" not in error_count
+        assert status == "fail"
+        assert error_type == "parameter"
 
 
 class TestRunExecution:
@@ -241,6 +232,53 @@ class TestRunExecution:
         assert tool_calls[1]["tool"] == "control_climate"
         assert tool_calls[1]["status"] == "success"
 
+    async def test_fail_sets_error_type_and_error_msg(self):
+        """tool 실패 시 error_type · error_msg 필드가 tool_calls 에 포함되는지 확인."""
+        state = _make_state(plan=["에어컨을 켠다"])
+
+        with (
+            patch(
+                "app.agents.execution._extract_tool_call",
+                new_callable=AsyncMock,
+                return_value={"tool_name": "control_climate", "params": {}},
+            ),
+            patch(
+                "asyncio.wait_for",
+                new_callable=AsyncMock,
+                side_effect=asyncio.TimeoutError,
+            ),
+            patch("app.agent.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.execution import run_execution
+            result = await run_execution(state)
+
+        tc = result["tool_calls"][-1]
+        assert tc["status"] == "fail"
+        assert tc["error_type"] == "timeout"
+        assert tc["error_msg"] != ""
+
+    async def test_no_error_count_in_return(self):
+        """run_execution 반환값에 error_count 가 없어야 한다 (observe 책임)."""
+        state = _make_state(plan=["와이퍼를 켠다"])
+
+        with (
+            patch(
+                "app.agents.execution._extract_tool_call",
+                new_callable=AsyncMock,
+                return_value={"tool_name": "control_wiper", "params": {"on": True}},
+            ),
+            patch(
+                "app.agents.execution._call_mcp_tool_raw",
+                new_callable=AsyncMock,
+                return_value=("와이퍼를 켰습니다.", "success"),
+            ),
+            patch("app.agent.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.execution import run_execution
+            result = await run_execution(state)
+
+        assert "error_count" not in result
+
     async def test_vehicle_state_updated_on_success(self):
         """tool 성공 시 vehicle_state 에 last_{tool_name} 키가 생성되는지 확인."""
         state = _make_state(plan=["와이퍼를 켠다"])
@@ -263,6 +301,29 @@ class TestRunExecution:
 
         vehicle_state = result["context_data"]["vehicle_state"]
         assert vehicle_state.get("last_control_wiper") == "와이퍼를 켰습니다."
+
+    async def test_vehicle_state_not_updated_on_fail(self):
+        """tool 실패 시 vehicle_state 가 갱신되지 않아야 한다."""
+        state = _make_state(plan=["에어컨을 켠다"])
+
+        with (
+            patch(
+                "app.agents.execution._extract_tool_call",
+                new_callable=AsyncMock,
+                return_value={"tool_name": "control_climate", "params": {}},
+            ),
+            patch(
+                "asyncio.wait_for",
+                new_callable=AsyncMock,
+                side_effect=asyncio.TimeoutError,
+            ),
+            patch("app.agent.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.execution import run_execution
+            result = await run_execution(state)
+
+        vehicle_state = result["context_data"]["vehicle_state"]
+        assert "last_control_climate" not in vehicle_state
 
     async def test_ws_tokens_emitted(self):
         """tool_start / tool_result 토큰이 WS 로 송출되는지 확인."""
@@ -299,7 +360,6 @@ class TestRunExecution:
         """알 수 없는 tool 이름 추출 시 재추출 실패 → skip (tool_calls 에 추가 안 됨)."""
         state = _make_state(plan=["알 수 없는 작업"])
 
-        # 첫 추출: 목록에 없는 tool, 재추출: 또 없는 tool
         with (
             patch(
                 "app.agents.execution._extract_tool_call",
@@ -322,28 +382,6 @@ class TestRunExecution:
             result = await run_execution(state)
 
         assert result["tool_calls"] == []
-
-    async def test_error_count_propagated(self):
-        """timeout 누적 후 error_count 가 state 에 반영되는지 확인."""
-        state = _make_state(
-            plan=["에어컨을 켠다"],
-            error_count={"timeout": 1},  # 이미 1회 누적
-        )
-
-        with (
-            patch(
-                "app.agents.execution._extract_tool_call",
-                new_callable=AsyncMock,
-                return_value={"tool_name": "control_climate", "params": {"temperature": 22}},
-            ),
-            patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError),
-            patch("app.agent.nodes.websocket_manager.send_status", new_callable=AsyncMock),
-        ):
-            from app.agents.execution import run_execution
-            result = await run_execution(state)
-
-        # 이미 1회 + 이번 2회 = 최대 2회까지 누적
-        assert result["error_count"].get("timeout", 0) >= 2
 
     async def test_get_vehicle_status_updates_last_status_report(self):
         """get_vehicle_status 성공 시 last_status_report 키로 vehicle_state 갱신."""
@@ -392,7 +430,6 @@ class TestRunExecution:
             from app.agents.execution import run_execution
             result = await run_execution(state)
 
-        # vector_results 가 남아있어야 함
         assert result["context_data"].get("vector_results") == ["매뉴얼 청크"]
 
 
@@ -420,7 +457,6 @@ class TestRunExecutionIntegration:
         result_text, status = await _call_mcp_tool_raw("get_vehicle_status", {})
 
         assert status == "success"
-        # 응답에 차량 상태 관련 키워드가 포함되어야 함
         assert any(kw in result_text for kw in ("속도", "연료", "배터리", "km/h"))
 
     async def test_control_climate_real(self):
@@ -448,18 +484,18 @@ class TestRunExecutionIntegration:
         from app.agents.execution import _call_mcp_tool_raw, MCP_TOOLS
 
         sample_params = {
-            "control_climate":  {"temperature": 20, "on": True},
-            "set_navigation":   {"destination": "서울역"},
-            "control_media":    {"action": "play"},
+            "control_climate":   {"temperature": 20, "on": True},
+            "set_navigation":    {"destination": "서울역"},
+            "control_media":     {"action": "play"},
             "get_vehicle_status": {},
-            "control_window":   {"is_open": False},
-            "control_lighting": {"on": False},
-            "control_seat":     {"direction": "forward"},
-            "control_parking":  {"enable": False},
+            "control_window":    {"is_open": False},
+            "control_lighting":  {"on": False},
+            "control_seat":      {"direction": "forward"},
+            "control_parking":   {"enable": False},
             "trigger_emergency": {"kind": "alert"},
-            "set_driving_mode": {"mode": "normal"},
-            "control_wiper":    {"on": False},
-            "query_dashboard":  {"metric": "speed"},
+            "set_driving_mode":  {"mode": "normal"},
+            "control_wiper":     {"on": False},
+            "query_dashboard":   {"metric": "speed"},
         }
 
         errors: list[str] = []
@@ -472,4 +508,4 @@ class TestRunExecutionIntegration:
             except Exception as exc:
                 errors.append(f"{tool}: {exc}")
 
-        assert errors == [], f"호출 실패한 tool:\n" + "\n".join(errors)
+        assert errors == [], "호출 실패한 tool:\n" + "\n".join(errors)
