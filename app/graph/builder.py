@@ -26,6 +26,7 @@ from app.agent.nodes import supervisor_node
 from app.agent.observe import observe_node
 from app.agent.perception import perception_node
 from app.agent.state import AgentState
+from app.agents.execution import run_execution
 
 logger = logging.getLogger(__name__)
 
@@ -59,28 +60,13 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
 
 async def execution_node(state: AgentState) -> Dict[str, Any]:
     """
-    Execution Agent Mock.
-    추후 app/agents/execution.py 실제 로직으로 교체.
-    (MCP Tool 12종)
+    Execution Agent — app/agents/execution.py 실 구현 호출.
+    supervisor 가 plan 과 함께 next_agent="execution" 을 반환하면 이 노드가 실행된다.
+
+    흐름: plan 파싱 → MCP 12종 tool 호출 → tool_calls/vehicle_state 병합 반환
     """
-    logger.info("execution_node: Mock 실행")
-
-    # from app.agents.execution import run_execution
-    # execution_result =  await run_execution(state)
-
-    return {
-        "tool_calls": [
-            {
-                "tool": "mock_execution_tool",
-                "params": {},
-                "status": "success",
-                "result": "[Mock] Tool 실행 완료",
-            },
-        ],
-        "context_data": {
-            "vehicle_state": {"mock_key": "mock_value"},
-        },
-    }
+    logger.info("execution_node: 실 구현 호출")
+    return await run_execution(state)
 
 
 

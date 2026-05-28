@@ -50,6 +50,7 @@ ALLOWED_ORIGINS = [
 ]
 
 # ---------------------------------------------------------------------------
+
 # Observe 노드 재시도 정책 (계획서 5절)
 # ---------------------------------------------------------------------------
 
@@ -59,3 +60,27 @@ MAX_RETRY: Dict[str, int] = {
     "invalid_tool": 1,
     "sql": 3,
 }
+
+# MCP 서버 (DrivingCopilotBackend/mcp_server.py)
+# ---------------------------------------------------------------------------
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../../../DrivingCopilotBackend"))
+
+# MCP 서버를 실행할 Python 인터프리터
+# Backend venv 가 있으면 그걸 사용, 없으면 시스템 python3 폴백
+_BACKEND_VENV_PYTHON = os.path.join(_BACKEND_ROOT, "venv", "bin", "python")
+MCP_SERVER_PYTHON: str = os.getenv(
+    "MCP_SERVER_PYTHON",
+    _BACKEND_VENV_PYTHON if os.path.exists(_BACKEND_VENV_PYTHON) else "python3",
+)
+
+# MCP 서버 스크립트 절대 경로
+MCP_SERVER_SCRIPT: str = os.getenv(
+    "MCP_SERVER_SCRIPT",
+    os.path.join(_BACKEND_ROOT, "mcp_server.py"),
+)
+
+# MCP tool 호출 타임아웃 (초)
+MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
+

@@ -38,9 +38,9 @@ def get_agent_registry() -> list[dict]:
             "name": "execution",
             "skill": "Vehicle control commands, API interactions, and structured state modification.",
             "mcp_tools": [
-                "climate", "navigation", "media", "vehicle_status", 
-                "window", "lighting", "seat", "parking", 
-                "emergency", "driving_mode", "wiper", "dashboard_query"
+                "control_climate", "set_navigation", "control_media", "get_vehicle_status",
+                "control_window", "control_lighting", "control_seat", "control_parking",
+                "trigger_emergency", "set_driving_mode", "control_wiper", "query_dashboard"
             ]
         }
     ]
