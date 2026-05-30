@@ -5,12 +5,13 @@ from typing import Dict, Any
 
 from mcp import ClientSession, StdioServerParameters
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchian_qdrant import Qdrant
+import sqlite3
+from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from qdrant_Client.http import models
-from core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME
+from qdrant_client.http import models
+from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME
+from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
-from langchain.chains import create_sql_query_chain
 from langchain_community.utilities import SQLDatabase
 from langchain_core.prompts import PromptTemplate
 
@@ -50,7 +51,7 @@ def schema_Linking(query: str) -> Dict[str, str]:
     return selected_schemas
 
 def few_shot_sql(query: str, k: int=3) -> Dict[str, str]:
-    embeddings = HuggingFaceEmbeddings((model_name="MODEL_NAME"))
+    embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME)
     client = QdrantClient(url=QDRANT_URL)
 
     vectorstore = QdrantVectorStore(
@@ -62,7 +63,7 @@ def few_shot_sql(query: str, k: int=3) -> Dict[str, str]:
     search_filter = models.Filter(
         must=[
             models.FieldCondition(
-                key="metadta.source",
+                key="metadata.source",
                 match=models.MatchValue(value="few_shots_examples")
             )
         ]
