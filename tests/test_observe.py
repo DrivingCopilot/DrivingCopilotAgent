@@ -3,8 +3,6 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
-from langchain_core.messages import AIMessage
-
 from app.agent.observe import observe_node, _classify_last_tool, MAX_RETRY
 
 
@@ -103,11 +101,11 @@ async def test_observe_fail_at_limit_triggers_end():
         "error_count": {"parameter": 1},
     }
     result = await observe_node(state)
-    assert result["next_agent"] == "__end__"
+    # 한도 초과 시 reflect로 위임 (WebSocket 송신은 reflect_node 담당)
+    assert result["next_agent"] == "reflect"
     assert result["error_count"]["parameter"] == 2
     assert result["plan"] == []
-    assert len(result["messages"]) == 1
-    assert isinstance(result["messages"][0], AIMessage)
+    assert "messages" not in result
     assert "Stopping" in result["feedback"]
 
 
@@ -129,30 +127,21 @@ async def test_observe_fail_each_type_limit(error_type, initial_count, final_cou
         "error_count": {error_type: initial_count} if initial_count > 0 else {},
     }
     result = await observe_node(state)
-    assert result["next_agent"] == "__end__", f"{error_type}: expected __end__ at limit"
+    # 한도 초과 시 reflect로 위임
+    assert result["next_agent"] == "reflect", f"{error_type}: expected reflect at limit"
     assert result["error_count"][error_type] == final_count
 
 
 @pytest.mark.asyncio
-async def test_observe_fail_at_limit_sends_websocket(monkeypatch):
-    import app.agent.observe as observe_module
-
-    mock_send = AsyncMock()
-    monkeypatch.setattr(observe_module.websocket_manager, "send_status", mock_send)
-
+async def test_observe_fail_at_limit_sends_websocket():
+    # WebSocket 송신은 reflect_node로 이관됨.
+    # observe_node 자체는 WebSocket을 호출하지 않고 next_agent="reflect"만 반환.
     state = {
         "tool_calls": [
             {"tool": "wiper", "status": "fail", "error_type": "parameter", "error_msg": "invalid"}
         ],
         "error_count": {"parameter": 1},
     }
-    await observe_node(state)
-
-    assert mock_send.call_count == 2
-
-    first_payload = json.loads(mock_send.call_args_list[0][0][0])
-    assert first_payload["type"] == "text"
-    assert "최대 재시도 횟수" in first_payload["data"]
-
-    second_payload = json.loads(mock_send.call_args_list[1][0][0])
-    assert second_payload["reason"] == "error_limit"
+    result = await observe_node(state)
+    assert result["next_agent"] == "reflect"
+    assert "messages" not in result

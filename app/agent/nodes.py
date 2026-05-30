@@ -1,10 +1,26 @@
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
 from typing import Any, Dict
+
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+
 from .state import AgentState
-from .observe import MAX_RETRY
+from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K
+
+# ExperienceMemory lazy-init 싱글톤
+_experience_memory = None
+
+
+def _get_experience_memory():
+    global _experience_memory
+    if _experience_memory is None:
+        from app.memory.experience import ExperienceMemory
+        _experience_memory = ExperienceMemory()
+    return _experience_memory
 
 logger = logging.getLogger(__name__)
 
@@ -105,21 +121,43 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     feedback = state.get("feedback", "")
     route_type = state.get("route_type", "")
     current_next_agent = state.get("next_agent", "")
-    
+
     # 수퍼바이저 전용 모델 고정 (G1 비용 최적화 준수)
-    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1) 
-    
-    # 3. Context Fusion 고도화
+    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1)
+
+    # 첫 진입 시에만 experience 검색 (캐시 분기: run_graph 한 번에 재사용)
+    if "retrieved_experience" not in context_data:
+        user_query = next(
+            (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+        )
+        try:
+            retrieved = await asyncio.to_thread(
+                _get_experience_memory().search,
+                user_query,
+                route_type or None,
+                EXPERIENCE_TOP_K,
+            )
+            context_data = {
+                **context_data,
+                "retrieved_experience": [d.metadata["lesson"] for d in retrieved],
+            }
+        except Exception as e:
+            logger.warning("supervisor: experience 검색 실패 — %s", e)
+            context_data = {**context_data, "retrieved_experience": []}
+
+    # Context Fusion
     vector_rag = context_data.get("vector_results", [])
     graph_rag = context_data.get("graph_results", [])
     vehicle_state = context_data.get("vehicle_state", {})
-    
+    retrieved_experience = context_data.get("retrieved_experience", [])
+
     context_str = f"""[Context Data]
 - Route Type Hint: {route_type}
 - Previous Agent Hint: {current_next_agent}
 - Vector RAG Results: {vector_rag}
 - Graph RAG Results: {graph_rag}
 - Vehicle State: {vehicle_state}
+- Retrieved Experience (past lessons): {retrieved_experience}
 """
     
     # 4. 강화된 Reflexion 로직: feedback이 존재하면 프롬프트에 반영

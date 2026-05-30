@@ -9,6 +9,8 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
     START → supervisor → [knowledge | execution | perception | supervisor | END]
                 ↑               ↓             ↓              ↓
              observe ←──────────┴─────────────┴──────────────┘
+                ↓ (무조건)
+            reflect
                 ↓
           [supervisor | END]
 """
@@ -24,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent.nodes import supervisor_node
 from app.agent.observe import observe_node
+from app.agent.reflect import reflect_node
 from app.agent.perception import perception_node
 from app.agent.state import AgentState
 from app.agents.execution import run_execution
@@ -58,6 +61,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         },
     }
 
+
 async def execution_node(state: AgentState) -> Dict[str, Any]:
     """
     Execution Agent — app/agents/execution.py 실 구현 호출.
@@ -67,7 +71,6 @@ async def execution_node(state: AgentState) -> Dict[str, Any]:
     """
     logger.info("execution_node: 실 구현 호출")
     return await run_execution(state)
-
 
 
 # ---------------------------------------------------------------------------
@@ -84,16 +87,16 @@ def route_next(state: AgentState) -> str:
     next_agent = state.get("next_agent", "__end__")
 
     if next_agent in ("knowledge", "execution", "perception", "supervisor"):
-        logger.info(f"route_next: → {next_agent}")
+        logger.info("route_next: → %s", next_agent)
         return next_agent
 
     logger.info("route_next: → __end__")
     return "__end__"
 
 
-def route_after_observe(state: AgentState) -> str:
+def route_after_reflect(state: AgentState) -> str:
     """
-    observe_node 가 반환한 next_agent 값을 보고 다음을 결정.
+    reflect_node가 반환한 next_agent 값을 보고 다음을 결정.
 
     Returns:
         "supervisor" | "__end__"
@@ -101,10 +104,10 @@ def route_after_observe(state: AgentState) -> str:
     next_agent = state.get("next_agent", "__end__")
 
     if next_agent == "supervisor":
-        logger.info("route_after_observe: → supervisor")
+        logger.info("route_after_reflect: → supervisor")
         return "supervisor"
 
-    logger.info("route_after_observe: → __end__")
+    logger.info("route_after_reflect: → __end__")
     return "__end__"
 
 
@@ -113,7 +116,7 @@ def route_after_observe(state: AgentState) -> str:
 # ---------------------------------------------------------------------------
 
 # @lru_cache가 중간에서 알아서 캐시된 걸 돌려줌. build_graph()할때마다 그래프 다시 컴파일 안해도 되게 함
-# 한번 컴파일해놓고 계속 사용. 
+# 한번 컴파일해놓고 계속 사용.
 
 @lru_cache(maxsize=1)
 def build_graph():
@@ -131,6 +134,7 @@ def build_graph():
     graph.add_node("execution", execution_node)
     graph.add_node("perception", perception_node)
     graph.add_node("observe", observe_node)
+    graph.add_node("reflect", reflect_node)
 
     # 2. 시작 엣지
     # TODO: Query Router 구현 후 START → query_router → supervisor 로 교체
@@ -154,10 +158,13 @@ def build_graph():
     graph.add_edge("execution", "observe")
     graph.add_edge("perception", "observe")
 
-    # 5. observe → [supervisor | __end__] 조건부 분기
+    # 5. observe → reflect (무조건)
+    graph.add_edge("observe", "reflect")
+
+    # 6. reflect → [supervisor | END] 조건부 분기
     graph.add_conditional_edges(
-        "observe",
-        route_after_observe,
+        "reflect",
+        route_after_reflect,
         {
             "supervisor": "supervisor",
             "__end__": END,
@@ -198,8 +205,8 @@ async def run_graph(user_message: str, route_type: str = "") -> AgentState:
         "feedback": "",
     }
 
-    logger.info(f"run_graph 시작: {user_message!r} | route_type={route_type!r}")
-    # recursion_limit: 무한 루프 안전망 (ReAct 루프 + observe 재시도 고려)
+    logger.info("run_graph 시작: %r | route_type=%r", user_message, route_type)
+    # recursion_limit: 무한 루프 안전망 (ReAct 루프 + observe + reflect 고려)
     result = await app.ainvoke(initial_state, config={"recursion_limit": 25})
     logger.info("run_graph 완료")
 

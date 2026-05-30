@@ -1,0 +1,158 @@
+"""
+app/memory/experience.py
+
+ReAct Reflect 단계의 실패 경험을 Qdrant에 저장하고 검색하는 모듈.
+embedder.py와 동일한 패턴(LangChain QdrantVectorStore + HuggingFaceEmbeddings).
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client.http import models as qmodels
+from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+
+from app.core.config import (
+    MODEL_NAME,
+    VECTOR_SIZE,
+    EXPERIENCE_COLLECTION_NAME,
+)
+from app.services.qdrant_client import get_qdrant_client
+
+logger = logging.getLogger(__name__)
+
+
+class ExperienceMemory:
+    """
+    실패 경험을 Qdrant에 누적하고 유사 상황을 검색한다.
+
+    Args:
+        embeddings: 외부 주입 임베딩 모델. None이면 MODEL_NAME으로 새로 로드.
+                    supervisor나 embedder와 임베딩 모델을 공유할 때 사용.
+    """
+
+    def __init__(self, embeddings: HuggingFaceEmbeddings | None = None) -> None:
+        self._embeddings = embeddings or HuggingFaceEmbeddings(
+            model_name=MODEL_NAME,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+
+        self._client = get_qdrant_client()
+        self._ensure_collection()
+
+        self._vectorstore = QdrantVectorStore(
+            client=self._client,
+            collection_name=EXPERIENCE_COLLECTION_NAME,
+            embedding=self._embeddings,
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def search(
+        self,
+        situation: str,
+        route_type: str | None = None,
+        top_k: int = 5,
+    ) -> list[Document]:
+        """
+        유사 실패 경험을 검색한다.
+
+        Args:
+            situation: 현재 상황 텍스트 (user query + vehicle_state 요약)
+            route_type: 필터링할 route_type (rag|tool|vision|chat). None이면 전체 검색.
+            top_k: 반환할 최대 결과 수
+
+        Returns:
+            유사도 순으로 정렬된 list[Document]
+        """
+        if route_type:
+            search_filter = Filter(
+                must=[
+                    FieldCondition(
+                        key="route_type",
+                        match=MatchValue(value=route_type),
+                    )
+                ]
+            )
+            return self._vectorstore.similarity_search(
+                situation, k=top_k, filter=search_filter
+            )
+
+        return self._vectorstore.similarity_search(situation, k=top_k)
+
+    def save(
+        self,
+        situation: str,
+        failure_cause: str,
+        lesson: str,
+        route_type: str,
+    ) -> None:
+        """
+        실패 경험을 Qdrant에 저장한다. 실패 케이스에서만 호출.
+
+        Args:
+            situation: user query + vehicle_state 요약 + route_type
+            failure_cause: 에러 유형 (timeout|parameter|invalid_tool|sql)
+            lesson: 개선 전략 1~2문장 (LLM 생성)
+            route_type: 분류값 (rag|tool|vision|chat)
+        """
+        doc = Document(
+            page_content=situation,
+            metadata={
+                "failure_cause": failure_cause,
+                "lesson": lesson,
+                "route_type": route_type,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            },
+        )
+        self._vectorstore.add_documents([doc])
+        logger.info(
+            "experience_memory 저장: failure_cause=%s route_type=%s",
+            failure_cause,
+            route_type,
+        )
+
+    # ------------------------------------------------------------------
+    # Qdrant 내부 처리
+    # ------------------------------------------------------------------
+
+    def _ensure_collection(self) -> None:
+        """
+        experience_memory 컬렉션이 없으면 생성한다.
+        embedder.py와 동일한 int8 스칼라 양자화 적용.
+        route_type 필터 검색 속도를 위한 payload 인덱스 추가.
+        """
+        existing = [c.name for c in self._client.get_collections().collections]
+
+        if EXPERIENCE_COLLECTION_NAME in existing:
+            return
+
+        self._client.create_collection(
+            collection_name=EXPERIENCE_COLLECTION_NAME,
+            vectors_config=qmodels.VectorParams(
+                size=VECTOR_SIZE,
+                distance=qmodels.Distance.COSINE,
+            ),
+            quantization_config=qmodels.ScalarQuantization(
+                scalar=qmodels.ScalarQuantizationConfig(
+                    type=qmodels.ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                )
+            ),
+        )
+
+        self._client.create_payload_index(
+            collection_name=EXPERIENCE_COLLECTION_NAME,
+            field_name="route_type",
+            field_schema=qmodels.PayloadSchemaType.KEYWORD,
+        )
+
+        logger.info("Qdrant 컬렉션 생성: %s", EXPERIENCE_COLLECTION_NAME)

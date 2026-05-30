@@ -20,6 +20,8 @@ VECTOR_SIZE = 1024             # bge-m3 dense 벡터 차원
 QDRANT_PATH = "./qdrant_storage"       # 로컬 파일 모드 경로. Docker 전환 시 QDRANT_URL 사용
 QDRANT_URL = "http://localhost:6333"   # Docker/A6000 서버 모드 URL
 COLLECTION_NAME = "vehicle_manuals"    # Qdrant 컬렉션 이름
+EXPERIENCE_COLLECTION_NAME = "experience_memory"  # ReAct Reflect 실패 경험 컬렉션
+EXPERIENCE_TOP_K = 5                   # supervisor experience 검색 상위 결과 수
 
 ## 파서와 청커는 일단 넣긴 했는데 다른 코드에서 쓸거 같지 않은 지엽적인 값이라 안넣었어
 # ---------------------------------------------------------------------------
