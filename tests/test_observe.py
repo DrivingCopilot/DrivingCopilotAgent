@@ -101,8 +101,8 @@ async def test_observe_fail_at_limit_triggers_end():
         "error_count": {"parameter": 1},
     }
     result = await observe_node(state)
-    # 한도 초과 시 reflect로 위임 (WebSocket 송신은 reflect_node 담당)
-    assert result["next_agent"] == "reflect"
+    # 한도 초과 시 __end__ (reflect failure 분기에서 WebSocket 송신 처리)
+    assert result["next_agent"] == "__end__"
     assert result["error_count"]["parameter"] == 2
     assert result["plan"] == []
     assert "messages" not in result
@@ -127,15 +127,15 @@ async def test_observe_fail_each_type_limit(error_type, initial_count, final_cou
         "error_count": {error_type: initial_count} if initial_count > 0 else {},
     }
     result = await observe_node(state)
-    # 한도 초과 시 reflect로 위임
-    assert result["next_agent"] == "reflect", f"{error_type}: expected reflect at limit"
+    # 한도 초과 시 __end__
+    assert result["next_agent"] == "__end__", f"{error_type}: expected __end__ at limit"
     assert result["error_count"][error_type] == final_count
 
 
 @pytest.mark.asyncio
 async def test_observe_fail_at_limit_sends_websocket():
-    # WebSocket 송신은 reflect_node로 이관됨.
-    # observe_node 자체는 WebSocket을 호출하지 않고 next_agent="reflect"만 반환.
+    # WebSocket 송신은 reflect_node failure 분기에서 처리.
+    # observe_node 자체는 WebSocket을 호출하지 않고 next_agent="__end__"만 반환.
     state = {
         "tool_calls": [
             {"tool": "wiper", "status": "fail", "error_type": "parameter", "error_msg": "invalid"}
@@ -143,5 +143,5 @@ async def test_observe_fail_at_limit_sends_websocket():
         "error_count": {"parameter": 1},
     }
     result = await observe_node(state)
-    assert result["next_agent"] == "reflect"
+    assert result["next_agent"] == "__end__"
     assert "messages" not in result

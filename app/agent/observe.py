@@ -65,7 +65,7 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
         "observe: tool='%s' error_type='%s' count=%d/%d", tool_name, error_type, count, limit
     )
 
-    # 한도 초과 → reflect로 위임 (WebSocket 송신은 reflect_node 담당)
+    # 한도 초과 → __end__ (reflect failure 분기에서 WebSocket 송신 및 experience 저장 처리)
     if count >= limit:
         logger.warning(
             "observe: retry limit reached — tool='%s' error_type='%s' %d/%d",
@@ -73,7 +73,7 @@ async def observe_node(state: AgentState) -> Dict[str, Any]:
         )
         return {
             "error_count": error_count,
-            "next_agent": "reflect",
+            "next_agent": "__end__",
             "plan": [],
             "feedback": (
                 f"Tool '{tool_name}' failed {error_type} {count}/{limit} times. Stopping."

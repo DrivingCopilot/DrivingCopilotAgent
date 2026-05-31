@@ -8,7 +8,6 @@ embedder.py와 동일한 패턴(LangChain QdrantVectorStore + HuggingFaceEmbeddi
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -90,34 +89,31 @@ class ExperienceMemory:
     def save(
         self,
         situation: str,
-        failure_cause: str,
         lesson: str,
         route_type: str,
     ) -> None:
         """
         실패 경험을 Qdrant에 저장한다. 실패 케이스에서만 호출.
 
+        payload 3필드:
+            situation (page_content): 임베딩 대상. user query + route_type 등 요약
+            lesson (metadata): 개선 전략 1~2문장 (supervisor가 검색 후 활용)
+            route_type (metadata): rag|tool|vision|chat (필터 검색용)
+
         Args:
             situation: user query + vehicle_state 요약 + route_type
-            failure_cause: 에러 유형 (timeout|parameter|invalid_tool|sql)
             lesson: 개선 전략 1~2문장 (LLM 생성)
             route_type: 분류값 (rag|tool|vision|chat)
         """
         doc = Document(
             page_content=situation,
             metadata={
-                "failure_cause": failure_cause,
                 "lesson": lesson,
                 "route_type": route_type,
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             },
         )
         self._vectorstore.add_documents([doc])
-        logger.info(
-            "experience_memory 저장: failure_cause=%s route_type=%s",
-            failure_cause,
-            route_type,
-        )
+        logger.info("experience_memory 저장: route_type=%s", route_type)
 
     # ------------------------------------------------------------------
     # Qdrant 내부 처리

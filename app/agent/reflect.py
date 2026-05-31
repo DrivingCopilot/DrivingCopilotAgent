@@ -5,9 +5,10 @@ ReAct 5단계 중 Reflect 노드 (계획서 2.2).
 observe → reflect → [supervisor | END] 흐름으로 매 사이클 진입.
 
 분기:
-  1. failure 케이스 (next_agent=="reflect"): LLM으로 lesson 생성 → ExperienceMemory 저장 → END
-  2. 정상/feedback 없음: LLM으로 done/continue 평가 → [END | supervisor]
-  3. 정상/feedback 있음: LLM 호출 생략 → supervisor 패스 (G1 비용 절감)
+  1. failure 케이스 (next_agent=="__end__", 한도 초과): LLM으로 lesson 생성 → ExperienceMemory 저장 → END
+  2. 그 외 (정상 + 한도 미달 fail): LLM 호출 없이 supervisor 패스
+     - 의도 충족 평가는 supervisor의 Reason 단계 책임
+     - 인턴 계획서 6절 "Reflexion: 실패 시 LLM" 정합
 """
 
 from __future__ import annotations
@@ -45,19 +46,11 @@ Output strictly valid JSON with two keys:
 - "lesson": 1-2 sentences on how to avoid this failure next time
 """
 
-REFLECT_EVAL_PROMPT = """You are evaluating whether the Driving Copilot has successfully fulfilled the user's intent.
-Review the conversation history and context, then decide if the task is complete.
-
-Output strictly valid JSON with two keys:
-- "verdict": either "done" (task complete, no further action needed) or "continue" (more steps required)
-- "reasoning": brief chain-of-thought explaining your verdict
-"""
-
 
 async def reflect_node(state: AgentState) -> Dict[str, Any]:
     """
     매 사이클 진입하는 Reflect 노드.
-    observe의 next_agent 값과 feedback 유무로 3가지 분기 처리.
+    observe의 next_agent 값으로 2가지 분기 처리.
     """
     next_agent: str = state.get("next_agent", "supervisor")
     feedback: str = state.get("feedback", "")
@@ -66,13 +59,13 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
     route_type: str = state.get("route_type", "")
     error_count: Dict[str, int] = state.get("error_count", {})
 
-    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1)
-
     # ------------------------------------------------------------------
-    # 분기 1: failure 케이스 (한도 초과, observe가 next_agent="reflect"로 라우팅)
+    # 분기 1: failure 케이스 (한도 초과, observe가 next_agent="__end__"로 라우팅)
     # ------------------------------------------------------------------
-    if next_agent == "reflect":
+    if next_agent == "__end__":
         logger.info("reflect: failure 케이스 진입 — lesson 생성 및 experience 저장")
+
+        llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1)
 
         # feedback에서 error_type 추출 (observe가 기록한 형식 파싱)
         error_type = "parameter"
@@ -128,7 +121,6 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
             await asyncio.to_thread(
                 _get_experience_memory().save,
                 situation,
-                error_type,
                 lesson,
                 route_type or "unknown",
             )
@@ -159,51 +151,7 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
         }
 
     # ------------------------------------------------------------------
-    # 분기 3: 정상 케이스 + feedback 있음 (한도 미달 재시도)
-    # LLM 호출 없이 supervisor로 바로 패스 (G1 비용 절감)
+    # 분기 2: 그 외 (정상 + 한도 미달 fail) → supervisor 패스
     # ------------------------------------------------------------------
-    if feedback:
-        logger.info("reflect: 정상 케이스 (feedback 있음) — LLM 생략, supervisor 패스")
-        return {"next_agent": "supervisor"}
-
-    # ------------------------------------------------------------------
-    # 분기 2: 정상 케이스 + feedback 없음 → done/continue 평가
-    # ------------------------------------------------------------------
-    logger.info("reflect: 정상 케이스 (feedback 없음) — done/continue LLM 평가")
-
-    try:
-        eval_messages = [SystemMessage(content=REFLECT_EVAL_PROMPT)]
-        eval_messages.extend(messages)
-        eval_messages.append(
-            HumanMessage(
-                content=(
-                    f"Context: {context_data}\n"
-                    f"Route type: {route_type}\n"
-                    "Has the user's intent been fully satisfied?"
-                )
-            )
-        )
-
-        content = ""
-        async for chunk in llm.astream(eval_messages):
-            if chunk.content:
-                content += chunk.content
-
-        content = content.strip()
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].strip()
-
-        parsed = json.loads(content)
-        verdict: str = parsed.get("verdict", "done")
-        reasoning: str = parsed.get("reasoning", "")
-        logger.info("reflect: verdict=%s reasoning=%s", verdict, reasoning)
-
-        if verdict == "continue":
-            return {"next_agent": "supervisor"}
-        return {"next_agent": "__end__"}
-
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning("reflect: done/continue LLM 파싱 실패 (%s) — END로 처리", e)
-        return {"next_agent": "__end__"}
+    logger.info("reflect: 정상/retry 케이스 — supervisor 패스 (LLM 호출 생략)")
+    return {"next_agent": "supervisor"}
