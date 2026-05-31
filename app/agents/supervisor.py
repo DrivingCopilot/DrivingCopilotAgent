@@ -205,6 +205,3 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 
 
 
-async def knowledge_node(state: AgentState) -> Dict[str, Any]:
-    await websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent processing..."}))
-    
