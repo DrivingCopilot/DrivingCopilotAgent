@@ -29,6 +29,6 @@ class A2ATaskRequest(BaseModel):
 
 class A2ATaskResponse(BaseModel):
     task_id: str
-    status: str                       # "success" | "fail"
+    status: str                       # "success" | "error"
     result: Dict[str, Any] = {}
     error: Optional[str] = None
