@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI 
-from .state import AgentState
+from app.graph.state import AgentState
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
