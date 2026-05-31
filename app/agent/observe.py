@@ -23,7 +23,7 @@ def _classify_last_tool(tool_calls: list[dict]) -> tuple[str, str | None]:
     if last["status"] == "success":
         return ("success", None)
 
-    if last["status"] == "fail":
+    if last["status"] == "error":
         error_type = last.get("error_type", "")
         if error_type not in MAX_RETRY:
             logger.warning(
