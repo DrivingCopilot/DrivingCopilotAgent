@@ -1,4 +1,4 @@
-# app/server/websocket.py
+# app/api/websocket.py
 #
 # Supervisor 에이전트의 WebSocket 인터페이스.
 # - 세션별 격리: 각 WS 연결마다 별도의 Streamer 를 contextvars 로 묶어

@@ -20,8 +20,8 @@ from functools import lru_cache
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.nodes import supervisor_node
-from app.agent.state import AgentState
+from app.graph.nodes import supervisor_node
+from app.graph.state import AgentState
 from app.agents.execution import run_execution
 
 logger = logging.getLogger(__name__)

@@ -31,7 +31,7 @@ from langchain_openai import ChatOpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from app.agent.state import AgentState
+from app.graph.state import AgentState
 from app.core.config import MCP_SERVER_PYTHON, MCP_SERVER_SCRIPT, MCP_TOOL_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -241,7 +241,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
     # nodes.py 의 websocket_manager(또는 _StreamerProxy) 참조 — 지연 import
-    from app.agent.nodes import websocket_manager
+    from app.graph.nodes import websocket_manager
 
     plan: List[str] = state.get("plan", [])
     tool_calls_acc: List[Dict[str, Any]] = list(state.get("tool_calls", []))

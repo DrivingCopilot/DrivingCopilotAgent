@@ -15,7 +15,7 @@ VECTOR_SIZE = 1024             # bge-m3 dense 벡터 차원
 # Qdrant
 # ---------------------------------------------------------------------------
 
-QDRANT_PATH = "./qdrant_storage"       # 로컬 파일 모드 경로. Docker 전환 시 QDRANT_URL 사용
+QDRANT_PATH = "./data/qdrant_storage"  # 로컬 파일 모드 경로. Docker 전환 시 QDRANT_URL 사용
 QDRANT_URL = "http://localhost:6333"   # Docker/A6000 서버 모드 URL
 COLLECTION_NAME = "vehicle_manuals"    # Qdrant 컬렉션 이름
 

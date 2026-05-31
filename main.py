@@ -14,10 +14,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agent import nodes
+from app.graph import nodes
 from app.core import config
-from app.server.endpoints import router as http_router
-from app.server.websocket import router as ws_router, streamer_proxy
+from app.api.http import router as http_router
+from app.api.websocket import router as ws_router, streamer_proxy
 
 logging.basicConfig(
     level=logging.INFO,
