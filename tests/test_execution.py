@@ -221,7 +221,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success"),
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -247,7 +247,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 side_effect=asyncio.TimeoutError,
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -272,7 +272,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value=("와이퍼를 켰습니다.", "success"),
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -294,7 +294,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value=("와이퍼를 켰습니다.", "success"),
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -317,7 +317,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 side_effect=asyncio.TimeoutError,
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -345,7 +345,7 @@ class TestRunExecution:
                 return_value=("창문을 열었습니다.", "success"),
             ),
             patch(
-                "app.graph.nodes.websocket_manager.send_status",
+                "app.graph.ws.websocket_manager.send_status",
                 side_effect=capture_ws,
             ),
         ):
@@ -366,7 +366,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value={"tool_name": "unknown_tool_xyz", "params": {}},
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -377,7 +377,7 @@ class TestRunExecution:
         """plan 이 비어 있으면 tool_calls 변화 없음."""
         state = _make_state(plan=[])
 
-        with patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock):
+        with patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock):
             from app.agents.execution import run_execution
             result = await run_execution(state)
 
@@ -398,7 +398,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value=("속도 60km/h, RPM 2000, 연료 80%", "success"),
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
@@ -425,7 +425,7 @@ class TestRunExecution:
                 new_callable=AsyncMock,
                 return_value=("실내등을 켰습니다.", "success"),
             ),
-            patch("app.graph.nodes.websocket_manager.send_status", new_callable=AsyncMock),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.graph import nodes
+from app.graph import ws as graph_ws
 from app.core import config
 from app.api.http import router as http_router
 from app.api.websocket import router as ws_router, streamer_proxy
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     # supervisor_node 내부의 websocket_manager 를 contextvars 기반 프록시로 교체.
     # 실제 전송은 현재 WS 세션의 Streamer 로 위임되므로 세션 간 broadcast 누출이 없다.
     # HTTP /invoke 같이 WS 세션 바깥에서 호출되는 경로는 로그로만 출력된다.
-    nodes.websocket_manager = streamer_proxy
+    graph_ws.websocket_manager = streamer_proxy
     logger.info("Supervisor streamer proxy attached")
     yield
 
