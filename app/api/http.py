@@ -1,4 +1,4 @@
-# app/server/endpoints.py
+# app/api/http.py
 #
 # Supervisor 에이전트의 HTTP 인터페이스.
 # DrivingCopilotBackend (port 8000) 에서 단발성으로 supervisor 를 호출할 때 사용한다.

@@ -31,7 +31,8 @@ from langchain_openai import ChatOpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from app.agent.state import AgentState
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 from app.core.config import MCP_SERVER_PYTHON, MCP_SERVER_SCRIPT, MCP_TOOL_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -240,9 +241,6 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
     Returns:
         state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
-    # nodes.py 의 websocket_manager(또는 _StreamerProxy) 참조 — 지연 import
-    from app.agent.nodes import websocket_manager
-
     plan: List[str] = state.get("plan", [])
     tool_calls_acc: List[Dict[str, Any]] = list(state.get("tool_calls", []))
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
@@ -267,7 +265,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         # ── 2. 잘못된 Tool — 1회 재추출 재시도 ─────────────────────────────
         if tool_name not in MCP_TOOLS:
             logger.warning("알 수 없는 tool '%s' (step=%r), 재추출 시도", tool_name, step)
-            await websocket_manager.send_status(
+            await _ws.websocket_manager.send_status(
                 json.dumps({
                     "type": "status",
                     "data": f"알 수 없는 Tool '{tool_name}', 재추출 시도",
@@ -281,7 +279,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             tool_params = tool_info.get("params", {})
 
         # ── 3. tool_start WS 토큰 ───────────────────────────────────────────
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({
                 "type": "tool_start",
                 "data": {"tool_name": tool_name, "params": tool_params},
@@ -296,7 +294,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         )
 
         # ── 5. tool_result WS 토큰 ──────────────────────────────────────────
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({
                 "type": "tool_result",
                 "data": {
