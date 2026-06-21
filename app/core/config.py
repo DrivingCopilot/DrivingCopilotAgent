@@ -70,3 +70,12 @@ MCP_SERVER_SCRIPT: str = os.getenv(
 
 # MCP tool 호출 타임아웃 (초)
 MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
+
+# ---------------------------------------------------------------------------
+# Vision 모델 (Perception Agent — Qwen2-VL 7B FP16)
+# ---------------------------------------------------------------------------
+# 계획서 2.4절: Planner/Executor(Qwen2-VL INT4)와 별도로 FP16 모델을 사용한다.
+# 로컬 vLLM 서버가 아직 없는 경우 base_url 이 비어 OpenAI 정식 API로 요청이
+# 나가니, 실제 서버 기동 후 PERCEPTION_VLM_BASE_URL 을 채워야 한다.
+PERCEPTION_VLM_BASE_URL: str = os.getenv("PERCEPTION_VLM_BASE_URL", "")
+PERCEPTION_VLM_MODEL: str = os.getenv("PERCEPTION_VLM_MODEL", "qwen2-vl-7b-fp16")
