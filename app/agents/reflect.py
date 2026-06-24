@@ -23,6 +23,7 @@ from langchain_openai import ChatOpenAI
 
 from app.graph import ws as _ws
 from app.graph.state import AgentState
+from app.memory.experience import build_situation
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +79,8 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
         user_query = next(
             (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
         )
-        vehicle_state_summary = str(context_data.get("vehicle_state", {}))[:200]
-        situation = (
-            f"query: {user_query} | route_type: {route_type} | "
-            f"vehicle_state: {vehicle_state_summary}"
-        )
+        vehicle_state = context_data.get("vehicle_state", {})
+        situation = build_situation(user_query, route_type, vehicle_state)
 
         # LLM 호출: lesson 생성
         lesson = ""
@@ -112,8 +110,11 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
             lesson = parsed.get("lesson", feedback)
             logger.info("reflect: lesson 생성 완료 — %s", lesson)
 
-        except (json.JSONDecodeError, Exception) as e:
-            logger.warning("reflect: lesson LLM 파싱 실패 (%s) — feedback 사용", e)
+        except json.JSONDecodeError as e:
+            logger.warning("reflect: lesson JSON 파싱 실패 (%s) — feedback 사용", e)
+            lesson = feedback
+        except Exception as e:
+            logger.warning("reflect: lesson LLM 호출 실패 (%s) — feedback 사용", e)
             lesson = feedback
 
         # ExperienceMemory 저장 (동기 함수 → asyncio.to_thread)

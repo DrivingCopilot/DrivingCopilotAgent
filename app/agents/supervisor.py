@@ -17,6 +17,7 @@ from langchain_openai import ChatOpenAI
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K
+from app.memory.experience import build_situation
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +127,12 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         user_query = next(
             (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
         )
+        vehicle_state = context_data.get("vehicle_state", {})
+        situation_query = build_situation(user_query, route_type or "", vehicle_state)
         try:
             retrieved = await asyncio.to_thread(
                 _get_experience_memory().search,
-                user_query,
+                situation_query,
                 route_type or None,
                 EXPERIENCE_TOP_K,
             )

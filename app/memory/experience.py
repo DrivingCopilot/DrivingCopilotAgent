@@ -25,6 +25,15 @@ from app.services.qdrant_client import get_qdrant_client
 logger = logging.getLogger(__name__)
 
 
+def build_situation(user_query: str, route_type: str, vehicle_state: dict | None = None) -> str:
+    """save와 search가 동일한 임베딩 텍스트를 쓰도록 situation 문자열을 구성한다."""
+    vehicle_state_summary = str(vehicle_state or {})[:200]
+    return (
+        f"query: {user_query} | route_type: {route_type} | "
+        f"vehicle_state: {vehicle_state_summary}"
+    )
+
+
 class ExperienceMemory:
     """
     실패 경험을 Qdrant에 누적하고 유사 상황을 검색한다.
