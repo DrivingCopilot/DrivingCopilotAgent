@@ -21,19 +21,17 @@ WS 토큰 (계획서 표준):
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.core.config import MCP_SERVER_PYTHON, MCP_SERVER_SCRIPT, MCP_TOOL_TIMEOUT
+from app.core.mcp_client import call_mcp_tool_raw as _call_mcp_tool_raw
+from app.core.mcp_client import call_mcp_tool_once as _call_mcp_tool_once
 
 logger = logging.getLogger(__name__)
 
@@ -103,81 +101,8 @@ def _get_extraction_llm() -> ChatOpenAI:
     return _EXTRACTION_LLM
 
 
-# ---------------------------------------------------------------------------
-# MCP 클라이언트 헬퍼
-# ---------------------------------------------------------------------------
-
-async def _call_mcp_tool_raw(tool_name: str, params: Dict[str, Any]) -> Tuple[str, str]:
-    """
-    stdio transport 로 MCP 서버에 연결해 tool 을 호출한다.
-
-    Returns:
-        (result_text, status) — status: "success" | "error"
-    """
-    server_params = StdioServerParameters(
-        command=MCP_SERVER_PYTHON,
-        args=[MCP_SERVER_SCRIPT],
-    )
-
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(tool_name, params)
-
-            if result.isError:
-                err_text = str(result.content)
-                logger.error("MCP tool error: %s → %s", tool_name, err_text)
-                return err_text, "error"
-
-            content = result.content
-            if content and hasattr(content[0], "text"):
-                return content[0].text, "success"
-            return str(content), "success"
-
-
-async def _call_mcp_tool_once(
-    tool_name: str,
-    params: Dict[str, Any],
-) -> Tuple[str, str, str, str]:
-    """
-    단일 MCP tool 호출. retry 없음 — 재시도 결정은 observe_node 책임.
-
-    예외를 잡아 error_type 으로 분류한 뒤 반환한다.
-    observe_node 가 error_type 을 읽어 재시도 횟수를 관리한다.
-
-    Returns:
-        (result_text, status, error_type, error_msg)
-        - status    : "success" | "fail"
-        - error_type: "" | "timeout" | "parameter"  (fail 시에만 의미 있음)
-        - error_msg : 원본 에러 메시지               (fail 시에만 의미 있음)
-    """
-    try:
-        result_text, raw_status = await asyncio.wait_for(
-            _call_mcp_tool_raw(tool_name, params),
-            timeout=MCP_TOOL_TIMEOUT,
-        )
-        # MCP 서버가 isError 응답을 보낸 경우 → parameter 오류로 분류
-        if raw_status == "error":
-            logger.warning("MCP tool returned error: %s — %s", tool_name, result_text)
-            return result_text, "fail", "parameter", result_text
-
-        return result_text, "success", "", ""
-
-    except asyncio.TimeoutError:
-        error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
-        logger.warning("MCP timeout: %s", tool_name)
-        return error_msg, "fail", "timeout", error_msg
-
-    except Exception as exc:
-        err_str = str(exc)
-        is_param_error = any(
-            kw in err_str.lower()
-            for kw in ("validation", "parameter", "invalid", "field", "required")
-        )
-        error_type = "parameter" if is_param_error else "parameter"
-        logger.error("MCP unexpected error: %s — %s", tool_name, exc)
-        return f"[error] {err_str}", "fail", error_type, err_str
-
+# MCP 클라이언트 호출(_call_mcp_tool_raw/_call_mcp_tool_once)은 app.core.mcp_client 로 이동.
+# perception.py 와 공유하기 위함. import 시 위에서 별칭으로 바인딩.
 
 # ---------------------------------------------------------------------------
 # Plan → Tool Call 추출 (LLM 보조)
