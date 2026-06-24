@@ -1,5 +1,5 @@
 """
-app/agent/perception.py
+app/agents/perception.py
 
 Perception Agent (Mock VLM).
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from app.agent.state import AgentState
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 

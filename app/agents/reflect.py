@@ -1,5 +1,5 @@
 """
-app/agent/reflect.py
+app/agents/reflect.py
 
 ReAct 5단계 중 Reflect 노드 (계획서 2.2).
 observe → reflect → [supervisor | END] 흐름으로 매 사이클 진입.
@@ -21,8 +21,8 @@ from typing import Any, Dict
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.agent.state import AgentState
-from app.agent.nodes import websocket_manager
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +138,10 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
             f"최대 재시도 횟수({limit_val}회)에 도달했습니다. 요청을 처리할 수 없습니다."
         )
 
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({"type": "text", "data": user_msg})
         )
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({"type": "done", "reason": "error_limit"})
         )
 

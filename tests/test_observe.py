@@ -3,7 +3,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock
 
-from app.agent.observe import observe_node, _classify_last_tool, MAX_RETRY
+from app.agents.observe import observe_node, _classify_last_tool, MAX_RETRY
 
 
 # ---------------------------------------------------------------------------
@@ -21,13 +21,13 @@ def test_classify_success():
 
 @pytest.mark.parametrize("error_type", ["timeout", "parameter", "invalid_tool", "sql"])
 def test_classify_fail_known(error_type):
-    entry = {"tool": "x", "status": "fail", "error_type": error_type, "error_msg": "err"}
+    entry = {"tool": "x", "status": "error", "error_type": error_type, "error_msg": "err"}
     result = _classify_last_tool([entry])
     assert result == ("fail", error_type)
 
 
 def test_classify_fail_unknown_type():
-    entry = {"tool": "x", "status": "fail", "error_type": "weird", "error_msg": "err"}
+    entry = {"tool": "x", "status": "error", "error_type": "weird", "error_msg": "err"}
     result = _classify_last_tool([entry])
     assert result == ("fail", "parameter"), "unknown error_type should fall back to 'parameter'"
 
@@ -78,7 +78,7 @@ async def test_observe_unknown():
 async def test_observe_fail_below_limit():
     state = {
         "tool_calls": [
-            {"tool": "wiper", "status": "fail", "error_type": "parameter", "error_msg": "invalid"}
+            {"tool": "wiper", "status": "error", "error_type": "parameter", "error_msg": "invalid"}
         ],
         "error_count": {},
     }
@@ -96,7 +96,7 @@ async def test_observe_fail_below_limit():
 async def test_observe_fail_at_limit_triggers_end():
     state = {
         "tool_calls": [
-            {"tool": "wiper", "status": "fail", "error_type": "parameter", "error_msg": "invalid"}
+            {"tool": "wiper", "status": "error", "error_type": "parameter", "error_msg": "invalid"}
         ],
         "error_count": {"parameter": 1},
     }
@@ -122,7 +122,7 @@ async def test_observe_fail_at_limit_triggers_end():
 async def test_observe_fail_each_type_limit(error_type, initial_count, final_count):
     state = {
         "tool_calls": [
-            {"tool": "mock_tool", "status": "fail", "error_type": error_type, "error_msg": "err"}
+            {"tool": "mock_tool", "status": "error", "error_type": error_type, "error_msg": "err"}
         ],
         "error_count": {error_type: initial_count} if initial_count > 0 else {},
     }
@@ -138,7 +138,7 @@ async def test_observe_fail_at_limit_sends_websocket():
     # observe_node 자체는 WebSocket을 호출하지 않고 next_agent="__end__"만 반환.
     state = {
         "tool_calls": [
-            {"tool": "wiper", "status": "fail", "error_type": "parameter", "error_msg": "invalid"}
+            {"tool": "wiper", "status": "error", "error_type": "parameter", "error_msg": "invalid"}
         ],
         "error_count": {"parameter": 1},
     }

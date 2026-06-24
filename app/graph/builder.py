@@ -18,59 +18,20 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
 from functools import lru_cache
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.nodes import supervisor_node
-from app.agent.observe import observe_node
-from app.agent.reflect import reflect_node
-from app.agent.perception import perception_node
-from app.agent.state import AgentState
+from app.agents.supervisor import supervisor_node
+from app.agents.observe import observe_node
+from app.agents.reflect import reflect_node
+from app.agents.perception import perception_node
+from app.agents.knowledge import knowledge_node
 from app.agents.execution import run_execution
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Mock 노드 (추후 app/agents/ 실제 로직으로 교체)
-# ---------------------------------------------------------------------------
-
-async def knowledge_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Knowledge Agent Mock.
-    추후 app/agents/knowledge.py 실제 로직으로 교체.
-    (Vector RAG / Graph RAG / Text2SQL)
-    """
-    logger.info("knowledge_node: Mock 실행")
-
-    return {
-        "tool_calls": [
-            {
-                "tool": "mock_knowledge_search",
-                "params": {},
-                "status": "success",
-                "result": "[Mock] 검색 완료",
-            },
-        ],
-        "context_data": {
-            "vector_results": ["[Mock] 매뉴얼 청크 1", "[Mock] 매뉴얼 청크 2"],
-            "graph_results": ["[Mock] 엔진경고등 → 점화플러그 → 교체주기"],
-        },
-    }
-
-
-async def execution_node(state: AgentState) -> Dict[str, Any]:
-    """
-    Execution Agent — app/agents/execution.py 실 구현 호출.
-    supervisor 가 plan 과 함께 next_agent="execution" 을 반환하면 이 노드가 실행된다.
-
-    흐름: plan 파싱 → MCP 12종 tool 호출 → tool_calls/vehicle_state 병합 반환
-    """
-    logger.info("execution_node: 실 구현 호출")
-    return await run_execution(state)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +92,7 @@ def build_graph():
     # 1. 노드 등록
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("knowledge", knowledge_node)
-    graph.add_node("execution", execution_node)
+    graph.add_node("execution", run_execution)
     graph.add_node("perception", perception_node)
     graph.add_node("observe", observe_node)
     graph.add_node("reflect", reflect_node)

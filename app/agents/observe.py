@@ -4,7 +4,7 @@ import copy
 import logging
 from typing import Any, Dict
 
-from app.agent.state import AgentState
+from app.graph.state import AgentState
 from app.core.config import MAX_RETRY
 
 logger = logging.getLogger(__name__)

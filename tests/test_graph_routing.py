@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock, patch
 
 import app.graph.builder as builder_module
 from app.graph.builder import run_graph
@@ -41,18 +42,33 @@ def patch_supervisor(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_react_one_loop_execution(patch_supervisor):
+    # execution 노드는 실제 실행하되 MCP/LLM 경계만 mock (test_execution.py 패턴).
     tracker = patch_supervisor([
-        {"next_agent": "execution", "plan": ["s1"], "feedback": ""},
+        {"next_agent": "execution", "plan": ["에어컨을 22도로 켠다"], "feedback": ""},
         {"next_agent": "__end__", "plan": [], "feedback": ""},
     ])
 
-    result = await run_graph("에어컨 켜줘")
+    with (
+        patch(
+            "app.agents.execution._extract_tool_call",
+            new_callable=AsyncMock,
+            return_value={"tool_name": "control_climate", "params": {"temperature": 22, "on": True}},
+        ),
+        patch(
+            "app.agents.execution._call_mcp_tool_raw",
+            new_callable=AsyncMock,
+            return_value=("에어컨을 22℃로 켰어요.", "success"),
+        ),
+        patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+    ):
+        result = await run_graph("에어컨 켜줘")
 
     assert tracker["count"] == 2, "supervisor should be called exactly twice"
     assert len(result["tool_calls"]) == 1
-    assert result["tool_calls"][0]["tool"] == "mock_execution_tool"
+    assert result["tool_calls"][0]["tool"] == "control_climate"
     assert result["tool_calls"][0]["status"] == "success"
-    assert result["context_data"]["vehicle_state"] == {"mock_key": "mock_value"}
+    # 성공 시 vehicle_state 에 last_<tool> 기록 (run_execution)
+    assert result["context_data"]["vehicle_state"]["last_control_climate"] == "에어컨을 22℃로 켰어요."
 
 
 @pytest.mark.asyncio
@@ -104,7 +120,7 @@ async def test_observe_routes_to_end_on_retry_limit(patch_supervisor, monkeypatc
                 {
                     "tool": "wiper",
                     "params": {},
-                    "status": "fail",
+                    "status": "error",
                     "error_type": "invalid_tool",
                     "error_msg": "wrong tool",
                 },
@@ -112,7 +128,7 @@ async def test_observe_routes_to_end_on_retry_limit(patch_supervisor, monkeypatc
             "context_data": {**state.get("context_data", {})},
         }
 
-    monkeypatch.setattr(builder_module, "execution_node", failing_execution)
+    monkeypatch.setattr(builder_module, "run_execution", failing_execution)
     builder_module.build_graph.cache_clear()
 
     tracker = patch_supervisor([

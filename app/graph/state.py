@@ -10,17 +10,17 @@ def merge_context(left: dict, right: dict) -> dict:
 
 class AgentState(TypedDict):
     # 1. 단기 메모리 및 기본 컨텍스트
-    messages: Annotated[list, add_messages]  
-    route_type: str                          
-    
+    messages: Annotated[list, add_messages]
+    route_type: str
+
     # 2. Plan-and-Execute 및 A2A 상태
-    plan: list                             
-    next_agent: str                        
-    
+    plan: list
+    next_agent: str
+
     # 3. Tool 및 외부 시스템 실행 결과
-    tool_calls: Annotated[list, operator.add]                  
+    tool_calls: Annotated[list, operator.add]
     context_data: Annotated[dict, merge_context]
-    
+
     # 4. 실패 처리 (Retry) 로직
-    error_count: Dict[str, int]              
-    feedback: str                           
+    error_count: Dict[str, int]
+    feedback: str

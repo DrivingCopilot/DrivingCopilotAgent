@@ -16,7 +16,7 @@ Execution Agent — supervisor 의 plan 을 받아 MCP 12종 Tool 을 호출한�
 
 WS 토큰 (계획서 표준):
     {"type": "tool_start",  "data": {"tool_name": "...", "params": {...}}}
-    {"type": "tool_result", "data": {"tool_name": "...", "result": "...", "status": "success"|"fail"}}
+    {"type": "tool_result", "data": {"tool_name": "...", "result": "...", "status": "success"|"error"}}
 """
 
 from __future__ import annotations
@@ -31,7 +31,8 @@ from langchain_openai import ChatOpenAI
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from app.agent.state import AgentState
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 from app.core.config import MCP_SERVER_PYTHON, MCP_SERVER_SCRIPT, MCP_TOOL_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -146,9 +147,9 @@ async def _call_mcp_tool_once(
 
     Returns:
         (result_text, status, error_type, error_msg)
-        - status    : "success" | "fail"
-        - error_type: "" | "timeout" | "parameter"  (fail 시에만 의미 있음)
-        - error_msg : 원본 에러 메시지               (fail 시에만 의미 있음)
+        - status    : "success" | "error"
+        - error_type: "" | "timeout" | "parameter"  (error 시에만 의미 있음)
+        - error_msg : 원본 에러 메시지               (error 시에만 의미 있음)
     """
     try:
         result_text, raw_status = await asyncio.wait_for(
@@ -158,14 +159,14 @@ async def _call_mcp_tool_once(
         # MCP 서버가 isError 응답을 보낸 경우 → parameter 오류로 분류
         if raw_status == "error":
             logger.warning("MCP tool returned error: %s — %s", tool_name, result_text)
-            return result_text, "fail", "parameter", result_text
+            return result_text, "error", "parameter", result_text
 
         return result_text, "success", "", ""
 
     except asyncio.TimeoutError:
         error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
         logger.warning("MCP timeout: %s", tool_name)
-        return error_msg, "fail", "timeout", error_msg
+        return error_msg, "error", "timeout", error_msg
 
     except Exception as exc:
         err_str = str(exc)
@@ -175,7 +176,7 @@ async def _call_mcp_tool_once(
         )
         error_type = "parameter" if is_param_error else "parameter"
         logger.error("MCP unexpected error: %s — %s", tool_name, exc)
-        return f"[error] {err_str}", "fail", error_type, err_str
+        return f"[error] {err_str}", "error", error_type, err_str
 
 
 # ---------------------------------------------------------------------------
@@ -240,9 +241,6 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
     Returns:
         state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
-    # nodes.py 의 websocket_manager(또는 _StreamerProxy) 참조 — 지연 import
-    from app.agent.nodes import websocket_manager
-
     plan: List[str] = state.get("plan", [])
     tool_calls_acc: List[Dict[str, Any]] = list(state.get("tool_calls", []))
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
@@ -267,7 +265,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         # ── 2. 잘못된 Tool — 1회 재추출 재시도 ─────────────────────────────
         if tool_name not in MCP_TOOLS:
             logger.warning("알 수 없는 tool '%s' (step=%r), 재추출 시도", tool_name, step)
-            await websocket_manager.send_status(
+            await _ws.websocket_manager.send_status(
                 json.dumps({
                     "type": "status",
                     "data": f"알 수 없는 Tool '{tool_name}', 재추출 시도",
@@ -281,7 +279,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             tool_params = tool_info.get("params", {})
 
         # ── 3. tool_start WS 토큰 ───────────────────────────────────────────
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({
                 "type": "tool_start",
                 "data": {"tool_name": tool_name, "params": tool_params},
@@ -296,7 +294,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         )
 
         # ── 5. tool_result WS 토큰 ──────────────────────────────────────────
-        await websocket_manager.send_status(
+        await _ws.websocket_manager.send_status(
             json.dumps({
                 "type": "tool_result",
                 "data": {
@@ -318,7 +316,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             "result": result_text,
             "status": status,
         }
-        if status == "fail":
+        if status == "error":
             tool_call["error_type"] = error_type
             tool_call["error_msg"] = error_msg
 

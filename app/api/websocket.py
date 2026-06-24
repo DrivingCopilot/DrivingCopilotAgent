@@ -1,4 +1,4 @@
-# app/server/websocket.py
+# app/api/websocket.py
 #
 # Supervisor 에이전트의 WebSocket 인터페이스.
 # - 세션별 격리: 각 WS 연결마다 별도의 Streamer 를 contextvars 로 묶어
@@ -33,7 +33,7 @@ class Streamer:
         self._done_sent = False
 
     async def send_status(self, message: str) -> None:
-        """nodes.MockWebsocketManager 와 동일한 시그니처. supervisor_node 가 호출."""
+        """graph.ws.MockWebsocketManager 와 동일한 시그니처. 노드가 호출."""
         try:
             await self.ws.send_text(message)
         except Exception as e:
@@ -57,7 +57,7 @@ class Streamer:
 
 class _StreamerProxy:
     """
-    nodes.websocket_manager 가 참조할 모듈 레벨 프록시.
+    graph.ws.websocket_manager 가 참조할 모듈 레벨 프록시.
     실제 전송은 contextvars 에 바인딩된 현재 세션의 Streamer 로 위임한다.
     바인딩이 없으면 (e.g. HTTP /invoke 단발 호출) 로그로만 출력.
     """
