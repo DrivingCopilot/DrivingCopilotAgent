@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from app.graph.state import AgentState
+from app.core.mcp_client import call_mcp_tool_once
 
 logger = logging.getLogger(__name__)
 
@@ -15,36 +16,46 @@ class MockWebsocketManager:
 
 websocket_manager = MockWebsocketManager()
 
-# --- MCP Tool Wrappers ---
-# In a real integration, these would call actual MCP Server endpoints.
+
+async def _call_knowledge_tool(tool_name: str, params: Dict[str, Any]) -> str:
+    """
+    공용 MCP 서버의 knowledge tool 을 호출하고 결과 텍스트만 반환한다.
+    실패 시 ReAct 에이전트가 읽고 재시도/대안 판단할 수 있는 오류 문자열을 돌려준다.
+    """
+    result_text, status, error_type, error_msg = await call_mcp_tool_once(tool_name, params)
+    if status != "success":
+        logger.warning("MCP knowledge tool 실패: %s (%s) — %s", tool_name, error_type, error_msg)
+        return f"[{tool_name} 실패: {error_type or 'error'}] {error_msg}"
+    return result_text
+
 
 @tool
-def vector_rag_search(query: str) -> str:
+async def vector_rag_search(query: str) -> str:
     """
     Search for vehicle manual information using Vector RAG (Qdrant).
     Best for: General questions about the manual, usage instructions, or FAQs.
     """
-    # Mock implementation of MCP Vector RAG tool
-    return f"[Vector RAG Result] Found relevant manual chunks for '{query}'."
+    return await _call_knowledge_tool("vector_rag_search", {"query": query})
+
 
 @tool
-def graph_rag_search(query: str, entities: List[str] = None) -> str:
+async def graph_rag_search(query: str, entities: List[str] = None) -> str:
     """
     Search for relational information using Graph RAG (Neo4j).
     Best for: Multi-hop reasoning like "What components are related to this warning light?" or "Maintenance interval for a part".
     """
-    # Mock implementation of MCP Graph RAG tool
-    entity_str = ", ".join(entities) if entities else "None"
-    return f"[Graph RAG Result] Found relations for '{query}' (Entities: {entity_str})."
+    return await _call_knowledge_tool(
+        "graph_rag_search", {"query": query, "entities": entities or []}
+    )
+
 
 @tool
-def text_to_sql_query(query: str) -> str:
+async def text_to_sql_query(query: str) -> str:
     """
     Query structured vehicle telemetry or maintenance history from the database (Text2SQL).
     Best for: Data retrieval like "What was my average speed?" or "Last oil change date".
     """
-    # Mock implementation of MCP Text2SQL tool
-    return f"[Text2SQL Result] Executed SQL query for '{query}' and retrieved records."
+    return await _call_knowledge_tool("text_to_sql_query", {"query": query})
 
 KNOWLEDGE_SYSTEM_PROMPT = """You are the Knowledge Agent in the On-Device Multimodal Driving Copilot system.
 Your role is to act as the primary knowledge hub, retrieving information from various sources to answer user queries or fulfill plans delegated by the Supervisor.
@@ -62,10 +73,6 @@ Workflow:
 """
 
 async def knowledge_node(state: AgentState) -> Dict[str, Any]:
-    """
-    LangGraph Node for the Knowledge Agent.
-    Utilizes Qwen2-VL 1.5B (Executor) to process RAG, Graph RAG, and Text2SQL requests.
-    """
     await websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent retrieving context..."}))
     
     messages = state.get("messages", [])
@@ -84,8 +91,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     llm = ChatOpenAI(model="qwen2-vl-1.5b-instruct-int4", temperature=0.1)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
     
-    # Create the ReAct agent
-    agent = create_react_agent(llm, tools, state_modifier=KNOWLEDGE_SYSTEM_PROMPT)
+    agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
     
     messages_to_pass = messages + [instruction_msg]
     

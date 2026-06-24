@@ -94,8 +94,7 @@ def self_consistency(query: str, table_info: str, few_shot_examples: str, n: int
     다수결 투표(Majority Voting)를 통해 가장 빈도수가 높은 최종 SQL을 선택합니다.
     """
     sqls = []
-    db = SQLDatabase.from_uri()
-    
+
     def _generate_sql_from_llm(q: str, t_info: str, few_shots: str) -> str:
         sql_prompt = PromptTemplate.from_template(
             """You are an expert SQLite Data Analyst for an On-Device Multimodal Driving Copilot system.
