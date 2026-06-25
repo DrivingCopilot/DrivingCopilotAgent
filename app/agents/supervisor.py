@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K
+from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
 from app.memory.experience import build_situation
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     # 1. WebSocket 실시간 스트리밍 연동
     await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Planning next steps..."}))
 
-    messages = state.get("messages", [])
+    messages = state.get("messages", [])[-WINDOW_SIZE * 2:]
     plan = state.get("plan", [])
     context_data = state.get("context_data", {})
     error_count = state.get("error_count", {})
