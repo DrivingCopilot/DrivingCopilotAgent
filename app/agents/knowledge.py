@@ -1,11 +1,9 @@
-"""
-app/agents/knowledge.py
-
-Knowledge Agent — Vector RAG / Graph RAG / Text2SQL 담당.
-현재 Mock 구현. 추후 Qdrant, Neo4j, SQLite 실 연동으로 교체 예정.
-
-Mock 한정: tool_calls에 status:success를 함께 반환해 observe 노드가 정상 분기하도록 한다.
-"""
+# app/agents/knowledge.py
+#
+# Knowledge Agent — Vector RAG / Graph RAG / Text2SQL 담당.
+# 현재 Mock 구현. 추후 Qdrant, Neo4j, SQLite 실 연동으로 교체 예정.
+#
+# Mock 한정: tool_calls에 status:success를 함께 반환해 observe 노드가 정상 분기하도록 한다.
 
 import logging
 from typing import Any, Dict
@@ -28,6 +26,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             },
         ],
         "context_data": {
+            **state.get("context_data", {}),
             "vector_results": ["[Mock] 매뉴얼 청크 1", "[Mock] 매뉴얼 청크 2"],
             "graph_results": ["[Mock] 엔진경고등 → 점화플러그 → 교체주기"],
         },
