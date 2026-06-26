@@ -33,6 +33,18 @@ def _get_experience_memory():
     return _experience_memory
 
 
+# EntityMemory lazy-init 싱글톤
+_entity_memory = None
+
+
+def _get_entity_memory():
+    global _entity_memory
+    if _entity_memory is None:
+        from app.memory.entity import EntityMemory
+        _entity_memory = EntityMemory()
+    return _entity_memory
+
+
 def get_agent_registry() -> list[dict]:
     """사용 가능한 하위 Agent 목록을 반환한다. 추후 A2A HTTP 발견으로 교체 예정."""
     return [
@@ -149,6 +161,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     graph_rag = context_data.get("graph_results", [])
     vehicle_state = context_data.get("vehicle_state", {})
     retrieved_experience = context_data.get("retrieved_experience", [])
+    profile = _get_entity_memory().load()
 
     context_str = f"""[Context Data]
 - Route Type Hint: {route_type}
@@ -157,6 +170,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 - Graph RAG Results: {graph_rag}
 - Vehicle State: {vehicle_state}
 - Retrieved Experience (past lessons): {retrieved_experience}
+- User Profile (preferences): {profile}
 """
 
     # 강화된 Reflexion 로직: feedback이 존재하면 프롬프트에 반영

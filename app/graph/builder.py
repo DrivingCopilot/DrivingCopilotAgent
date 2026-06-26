@@ -26,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.supervisor import supervisor_node
 from app.agents.observe import observe_node
 from app.agents.reflect import reflect_node
+from app.agents.finalize import finalize_node
 from app.agents.perception import perception_node
 from app.agents.knowledge import knowledge_node
 from app.agents.execution import run_execution
@@ -96,6 +97,7 @@ def build_graph():
     graph.add_node("perception", perception_node)
     graph.add_node("observe", observe_node)
     graph.add_node("reflect", reflect_node)
+    graph.add_node("finalize", finalize_node)
 
     # 2. 시작 엣지
     # TODO: Query Router 구현 후 START → query_router → supervisor 로 교체
@@ -110,7 +112,7 @@ def build_graph():
             "execution": "execution",
             "perception": "perception",
             "supervisor": "supervisor",  # JSON 파싱 실패 시 자기 복구 루프
-            "__end__": END,
+            "__end__": "finalize",
         },
     )
 
@@ -128,9 +130,11 @@ def build_graph():
         route_after_reflect,
         {
             "supervisor": "supervisor",
-            "__end__": END,
+            "__end__": "finalize",
         },
     )
+
+    graph.add_edge("finalize", END)
 
     return graph.compile()
 

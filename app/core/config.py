@@ -24,6 +24,10 @@ EXPERIENCE_COLLECTION_NAME = "experience_memory"  # ReAct Reflect 실패 경험 
 EXPERIENCE_TOP_K = 5                   # supervisor experience 검색 상위 결과 수
 WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (계획서 2.5)
 
+# 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
+ENTITY_PROFILE_PATH = "./data/user_profile.json"
+EXTRACTOR_MODEL_NAME = "qwen2-vl-1.5b-instruct-int4"
+
 ## 파서와 청커는 일단 넣긴 했는데 다른 코드에서 쓸거 같지 않은 지엽적인 값이라 안넣었어
 # ---------------------------------------------------------------------------
 # 파서
