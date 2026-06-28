@@ -1,7 +1,8 @@
 # app/core/mcp_client.py
 #
-# MCP stdio 클라이언트 공용 헬퍼.
-# execution.py(Vehicle Tool 12종)와 perception.py(camera_feed)가 함께 사용한다.
+# MCP streamable-http 클라이언트 공용 헬퍼.
+# Backend mcp_server.py(transport="streamable-http")에 HTTP 로 연결한다.
+# execution.py(Vehicle Tool 12종)와 knowledge.py(text2sql/vector/graph)가 함께 사용한다.
 
 from __future__ import annotations
 
@@ -9,27 +10,23 @@ import asyncio
 import logging
 from typing import Any, Dict, Tuple
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
-from app.core.config import MCP_SERVER_PYTHON, MCP_SERVER_SCRIPT, MCP_TOOL_TIMEOUT
+from app.core.config import MCP_SERVER_URL, MCP_TOOL_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
 async def call_mcp_tool_raw(tool_name: str, params: Dict[str, Any]) -> Tuple[str, str]:
     """
-    stdio transport 로 MCP 서버에 연결해 tool 을 호출한다.
+    streamable-http transport 로 MCP 서버에 연결해 tool 을 호출한다.
 
     Returns:
         (result_text, status) — status: "success" | "error"
     """
-    server_params = StdioServerParameters(
-        command=MCP_SERVER_PYTHON,
-        args=[MCP_SERVER_SCRIPT],
-    )
-
-    async with stdio_client(server_params) as (read, write):
+    # streamablehttp_client 는 (read, write, get_session_id) 3-튜플을 yield 한다.
+    async with streamablehttp_client(MCP_SERVER_URL) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool_name, params)

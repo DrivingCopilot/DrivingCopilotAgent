@@ -28,22 +28,11 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 DB_PATH = os.getenv("VEHICLE_DB_PATH", "./data/vehicle_data.db")
 
 
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_BACKEND_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../../../DrivingCopilotBackend"))
-
-# MCP 서버를 실행할 Python 인터프리터
-# Backend venv 가 있으면 그걸 사용, 없으면 시스템 python3 폴백
-_BACKEND_VENV_PYTHON = os.path.join(_BACKEND_ROOT, "venv", "bin", "python")
-MCP_SERVER_PYTHON: str = os.getenv(
-    "MCP_SERVER_PYTHON",
-    _BACKEND_VENV_PYTHON if os.path.exists(_BACKEND_VENV_PYTHON) else "python3",
-)
-
-# MCP 서버 스크립트 절대 경로
-MCP_SERVER_SCRIPT: str = os.getenv(
-    "MCP_SERVER_SCRIPT",
-    os.path.join(_BACKEND_ROOT, "mcp_server.py"),
-)
+# MCP 서버 엔드포인트 (streamable-http transport)
+# Backend mcp_server.py 가 streamable-http 로 기동하는 상주 서버.
+# Backend REST(FastAPI)가 8000을 쓰므로 MCP 서버 기본 포트는 9000으로 분리돼 있다
+# (mcp_server.py: MCP_HOST/MCP_PORT 환경변수, 기본 http://{host}:{port}/mcp).
+MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 
 # MCP tool 호출 타임아웃 (초)
 MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
