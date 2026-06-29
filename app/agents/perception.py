@@ -87,6 +87,11 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
     """Perception Agent 노드. 카메라 프레임을 조회해 Vision LLM 으로 분석한다."""
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
 
+    logger.info(
+        "perception_node 시작: route_type=%s vlm_model=%s",
+        state.get("route_type"), PERCEPTION_VLM_MODEL,
+    )
+
     await _ws.websocket_manager.send_status(
         json.dumps({"type": "status", "data": "Perception agent 카메라 분석 중..."})
     )
@@ -108,8 +113,13 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
         })
     )
 
+    logger.info("perception_node: get_camera_frame status=%s", status)
+
     if status != "success":
-        logger.warning("camera_feed 조회 실패: %s", error_msg)
+        logger.warning(
+            "perception_node 완료 (camera 실패): error_type=%s error_msg=%s",
+            error_type, error_msg,
+        )
         return {
             "context_data": {
                 **context_data,
@@ -131,7 +141,7 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
     try:
         response = await _get_vision_llm().ainvoke([message])
     except Exception as exc:
-        logger.error("Vision LLM 호출 실패: %s", exc)
+        logger.error("perception_node 완료 (VLM 실패): %s", exc)
         return {
             "context_data": {
                 **context_data,
@@ -144,11 +154,14 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
             "plan": [],
         }
 
+    logger.debug("perception_node: VLM 원본 응답=%r", response.content)
+
     description, hazards = _parse_vision_response(response.content)
     plan_steps = [HAZARD_PLAN_STEPS[h] for h in hazards]
 
     logger.info(
-        "perception_node: 분석 완료 (%d chars, hazards=%s)", len(description), hazards
+        "perception_node 완료: description=%r hazards=%s plan=%s",
+        description, hazards, plan_steps,
     )
 
     return {
