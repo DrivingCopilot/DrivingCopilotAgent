@@ -134,6 +134,103 @@ class TestPerceptionNode:
 
         assert result["context_data"]["vector_results"] == ["매뉴얼 청크"]
 
+    async def test_hazard_detected_fills_plan_for_auto_trigger(self):
+        """비/터널/경고등 hazard가 JSON으로 감지되면 plan에 대응 조치가 채워진다."""
+        vision_json = '{"description": "비가 내리고 있습니다.", "hazards": ["rain"]}'
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm(vision_json),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        vision_results = result["context_data"]["vision_results"]
+        assert vision_results["status"] == "success"
+        assert vision_results["hazards"] == ["rain"]
+        assert vision_results["description"] == "비가 내리고 있습니다."
+        assert len(result["plan"]) == 1
+        assert "control_wiper" in result["plan"][0]
+
+    async def test_no_hazard_returns_empty_plan(self):
+        """hazard가 감지되지 않으면 plan은 빈 리스트로 명시된다 (stale plan 정리)."""
+        vision_json = '{"description": "맑은 날씨입니다.", "hazards": []}'
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm(vision_json),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        assert result["plan"] == []
+        assert result["context_data"]["vision_results"]["hazards"] == []
+
+    async def test_unstructured_response_falls_back_to_plain_description(self):
+        """JSON이 아닌 자유 텍스트 응답도 description으로 안전하게 폴백한다 (하위호환)."""
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm("비가 내리고 도로가 젖어있습니다."),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        vision_results = result["context_data"]["vision_results"]
+        assert vision_results["description"] == "비가 내리고 도로가 젖어있습니다."
+        assert vision_results["hazards"] == []
+        assert result["plan"] == []
+
+    async def test_unknown_hazard_value_is_filtered_out(self):
+        """controlled vocabulary 밖의 hazard 값은 무시되고 plan에 포함되지 않는다."""
+        vision_json = '{"description": "안개가 보입니다.", "hazards": ["fog"]}'
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm(vision_json),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        assert result["context_data"]["vision_results"]["hazards"] == []
+        assert result["plan"] == []
+
+    async def test_camera_frame_fetch_fail_returns_empty_plan(self):
+        """camera_feed 조회 실패 시에도 plan은 빈 리스트로 명시된다."""
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("", "fail", "timeout", "'get_camera_frame' 호출 타임아웃"),
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        assert result["plan"] == []
+
     async def test_ws_tokens_emitted(self):
         """tool_start / tool_result / status 토큰이 WS 로 송출되는지 확인."""
         ws_calls: list[str] = []

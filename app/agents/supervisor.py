@@ -13,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
 from app.core.config import AGENT_PORT
+from app.core.json_utils import extract_first_json_object
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 
@@ -20,42 +21,6 @@ logger = logging.getLogger(__name__)
 
 # 자기 자신 서버에서 Agent Card를 발견하는 클라이언트 (self-discovery)
 _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
-
-
-def _extract_first_json_object(text: str) -> str:
-    """
-    텍스트에서 첫 번째로 완성되는 최상위 JSON 객체만 잘라서 반환한다.
-    모델이 같은(혹은 다른) 객체를 계속 이어붙여도 첫 블록만 사용하고 나머지는 버린다.
-    문자열 리터럴 내부의 '{'/'}' 는 깊이 계산에서 제외해 reasoning/plan 내용에
-    중괄호가 등장해도 오작동하지 않는다.
-    """
-    start = text.find("{")
-    if start == -1:
-        return text
-
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-
-    return text[start:]  # 못 닫혔으면 원본 그대로 반환 (json.loads 에서 에러로 처리됨)
 
 
 async def _build_dynamic_agent_cards() -> str:
@@ -90,9 +55,10 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
 4. If the user requests an action or structured data retrieval, delegate to 'execution'.
 5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
-6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a successful, relevant answer, that IS sufficient: output "__end__" and summarize that result for the user in 'reasoning'.
-7. Always output your response in strictly valid JSON format.
-8. The JSON must contain three keys:
+6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'.
+7. If 'Vision/Perception Results' shows detected hazards (e.g. rain, tunnel, warning_light) AND 'Last Tool Call Result' shows a related action was already taken, explicitly mention BOTH the detected condition and the action taken in your summary — the action was triggered automatically by the Perception agent, not requested by the user.
+8. Always output your response in strictly valid JSON format.
+9. The JSON must contain three keys:
    - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
    - "plan": A list of step-by-step strings for the execution plan.
    - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
@@ -170,7 +136,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 {reflexion_str}
 
 [Instructions]
-Follow the Rules & Protocol above (especially Rules 2, 5, 6) using the Context Data. Think step-by-step (Chain-of-Thought) about which rule applies, then output next_agent accordingly.
+Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Context Data. Think step-by-step (Chain-of-Thought) about which rule applies, then output next_agent accordingly.
 """
 
     dynamic_cards = await _build_dynamic_agent_cards()
@@ -194,7 +160,7 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6) using the Context D
             content = content.split("```")[1].strip()
 
         # 모델이 같은/다른 JSON 객체를 반복해서 이어붙여도 첫 블록만 사용한다.
-        content = _extract_first_json_object(content)
+        content = extract_first_json_object(content)
 
         parsed_result = json.loads(content)
 
