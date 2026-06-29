@@ -22,6 +22,42 @@ logger = logging.getLogger(__name__)
 _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 
 
+def _extract_first_json_object(text: str) -> str:
+    """
+    텍스트에서 첫 번째로 완성되는 최상위 JSON 객체만 잘라서 반환한다.
+    모델이 같은(혹은 다른) 객체를 계속 이어붙여도 첫 블록만 사용하고 나머지는 버린다.
+    문자열 리터럴 내부의 '{'/'}' 는 깊이 계산에서 제외해 reasoning/plan 내용에
+    중괄호가 등장해도 오작동하지 않는다.
+    """
+    start = text.find("{")
+    if start == -1:
+        return text
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+
+    return text[start:]  # 못 닫혔으면 원본 그대로 반환 (json.loads 에서 에러로 처리됨)
+
+
 async def _build_dynamic_agent_cards() -> str:
     """
     A2A HTTP 발견으로 Agent Card 목록을 가져온다.
@@ -49,12 +85,14 @@ You rely on Chain-of-Thought reasoning to make decisions.
 
 [Rules & Protocol]
 1. Use A2A delegation by selecting the appropriate agent from the list above.
-2. If the user's request requires understanding the physical environment, delegate to 'perception'.
+2. If the user's request requires understanding the physical environment (e.g. weather, road, obstacles, warning lights) AND 'Vision/Perception Results' below is EMPTY, delegate to 'perception'. Never delegate to 'perception' twice in a row — if it is already populated, you have your answer (see Rule 6).
 3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'.
    - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
 4. If the user requests an action or structured data retrieval, delegate to 'execution'.
-5. Always output your response in strictly valid JSON format.
-6. The JSON must contain three keys:
+5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
+6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a successful, relevant answer, that IS sufficient: output "__end__" and summarize that result for the user in 'reasoning'.
+7. Always output your response in strictly valid JSON format.
+8. The JSON must contain three keys:
    - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
    - "plan": A list of step-by-step strings for the execution plan.
    - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
@@ -94,11 +132,23 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
             "plan": [],
         }
 
-    llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1)
+    # JSON 모드 + 페널티는 모델이 반복하는 걸 "줄여줄" 뿐 보장하지는 않는다 —
+    # 진짜 보장은 파싱 단계의 _extract_first_json_object 가 한다 (아래 참고).
+    llm = ChatOpenAI(
+        model="qwen2-vl-7b-instruct-int4",
+        temperature=0.1,
+        max_tokens=300,
+        frequency_penalty=1.2,
+        presence_penalty=0.6,
+        model_kwargs={"response_format": {"type": "json_object"}},
+    )
 
     vector_rag = context_data.get("vector_results", [])
     graph_rag = context_data.get("graph_results", [])
     vehicle_state = context_data.get("vehicle_state", {})
+    vision_results = context_data.get("vision_results", {})
+    tool_calls = state.get("tool_calls", [])
+    last_tool_call = tool_calls[-1] if tool_calls else {}
 
     context_str = f"""[Context Data]
 - Route Type Hint: {route_type}
@@ -106,6 +156,8 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 - Vector RAG Results: {vector_rag}
 - Graph RAG Results: {graph_rag}
 - Vehicle State: {vehicle_state}
+- Vision/Perception Results: {vision_results}
+- Last Tool Call Result: {last_tool_call}
 """
 
     reflexion_str = ""
@@ -118,10 +170,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 {reflexion_str}
 
 [Instructions]
-1. Think step-by-step (Chain-of-Thought). First, evaluate if the current Context Data is sufficient to answer the user's request.
-2. Pay special attention to whether you need more 'entities and relationships' (Graph RAG) vs 'semantic similarity' (Vector RAG).
-3. If sufficient, output an empty plan and "__end__" for next_agent.
-4. If insufficient, formulate the next steps in the 'plan' array and choose the 'next_agent'.
+Follow the Rules & Protocol above (especially Rules 2, 5, 6) using the Context Data. Think step-by-step (Chain-of-Thought) about which rule applies, then output next_agent accordingly.
 """
 
     dynamic_cards = await _build_dynamic_agent_cards()
@@ -143,6 +192,9 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].strip()
+
+        # 모델이 같은/다른 JSON 객체를 반복해서 이어붙여도 첫 블록만 사용한다.
+        content = _extract_first_json_object(content)
 
         parsed_result = json.loads(content)
 
