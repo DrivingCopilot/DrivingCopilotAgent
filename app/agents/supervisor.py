@@ -10,44 +10,33 @@ from typing import Any, Dict
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.a2a.client import A2AClient
+from app.a2a.registry import list_cards
+from app.core.config import AGENT_PORT
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-
-def get_agent_registry() -> list[dict]:
-    """사용 가능한 하위 Agent 목록을 반환한다. 추후 A2A HTTP 발견으로 교체 예정."""
-    return [
-        {
-            "name": "perception",
-            "skill": "Visual/spatial reasoning and camera/image analysis.",
-            "mcp_tools": ["analyze_camera_feed", "detect_objects"],
-        },
-        {
-            "name": "knowledge",
-            "skill": "Retrieves vehicle manuals, FAQs, and domain knowledge.",
-            "mcp_tools": ["vector_rag_search", "graph_rag_search"],
-        },
-        {
-            "name": "execution",
-            "skill": "Vehicle control commands, API interactions, and structured state modification.",
-            "mcp_tools": [
-                "control_climate", "set_navigation", "control_media", "get_vehicle_status",
-                "control_window", "control_lighting", "control_seat", "control_parking",
-                "trigger_emergency", "set_driving_mode", "control_wiper", "query_dashboard",
-            ],
-        },
-    ]
+# 자기 자신 서버에서 Agent Card를 발견하는 클라이언트 (self-discovery)
+_a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 
 
-def _build_dynamic_agent_cards() -> str:
-    registry = get_agent_registry()
+async def _build_dynamic_agent_cards() -> str:
+    """
+    A2A HTTP 발견으로 Agent Card 목록을 가져온다.
+    서버 미기동 등 HTTP 실패 시 로컬 registry로 폴백한다.
+    """
+    cards = await _a2a_client.fetch_all_cards()
+    if not cards:
+        logger.warning("A2A HTTP 발견 실패 — 로컬 registry로 폴백")
+        cards = list_cards()
+
     cards_str = ""
-    for idx, agent in enumerate(registry, 1):
-        cards_str += f"{idx}. {agent['name']}:\n"
-        cards_str += f"   - Skill: {agent['skill']}\n"
-        cards_str += f"   - MCP Tools: {', '.join(agent['mcp_tools'])}\n"
+    for idx, card in enumerate(cards, 1):
+        cards_str += f"{idx}. {card.name}:\n"
+        cards_str += f"   - Skill: {card.description}\n"
+        cards_str += f"   - MCP Tools: {', '.join(card.capabilities.mcp_tools)}\n"
     return cards_str
 
 
@@ -135,7 +124,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 4. If insufficient, formulate the next steps in the 'plan' array and choose the 'next_agent'.
 """
 
-    dynamic_cards = _build_dynamic_agent_cards()
+    dynamic_cards = await _build_dynamic_agent_cards()
     system_msg_content = SUPERVISOR_SYSTEM_PROMPT.format(agent_cards=dynamic_cards)
 
     messages_to_send = [SystemMessage(content=system_msg_content)]

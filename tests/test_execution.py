@@ -4,7 +4,7 @@ tests/test_execution.py
 Execution Agent 단위 테스트.
 
 테스트 구성:
-    [Unit]  Mock MCP 서버 — 실제 프로세스 없이 _call_mcp_tool_raw 를 patch
+    [Unit]  Mock MCP 서버 — 실제 프로세스 없이 app.core.mcp_client.call_mcp_tool_raw 를 patch
     [Integ] 실 MCP 서버  — pytest.mark.integration, BACKEND 환경 필요 시 실행
 
 실행 방법:
@@ -122,7 +122,7 @@ class TestCallMcpToolOnce:
     async def test_success(self):
         """정상 호출 → status='success', error_type=''."""
         with patch(
-            "app.agents.execution._call_mcp_tool_raw",
+            "app.core.mcp_client.call_mcp_tool_raw",
             new_callable=AsyncMock,
             return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success"),
         ):
@@ -140,7 +140,7 @@ class TestCallMcpToolOnce:
     async def test_mcp_server_error_classified_as_parameter(self):
         """MCP 서버가 isError 응답 → status='fail', error_type='parameter'."""
         with patch(
-            "app.agents.execution._call_mcp_tool_raw",
+            "app.core.mcp_client.call_mcp_tool_raw",
             new_callable=AsyncMock,
             return_value=("invalid temperature value", "error"),
         ):
@@ -217,7 +217,7 @@ class TestRunExecution:
                 return_value={"tool_name": "control_climate", "params": {"temperature": 22, "on": True}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success"),
             ),
@@ -268,7 +268,7 @@ class TestRunExecution:
                 return_value={"tool_name": "control_wiper", "params": {"on": True}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("와이퍼를 켰습니다.", "success"),
             ),
@@ -290,7 +290,7 @@ class TestRunExecution:
                 return_value={"tool_name": "control_wiper", "params": {"on": True}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("와이퍼를 켰습니다.", "success"),
             ),
@@ -340,7 +340,7 @@ class TestRunExecution:
                 return_value={"tool_name": "control_window", "params": {"is_open": True}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("창문을 열었습니다.", "success"),
             ),
@@ -394,7 +394,7 @@ class TestRunExecution:
                 return_value={"tool_name": "get_vehicle_status", "params": {}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("속도 60km/h, RPM 2000, 연료 80%", "success"),
             ),
@@ -421,7 +421,7 @@ class TestRunExecution:
                 return_value={"tool_name": "control_lighting", "params": {"on": True}},
             ),
             patch(
-                "app.agents.execution._call_mcp_tool_raw",
+                "app.core.mcp_client.call_mcp_tool_raw",
                 new_callable=AsyncMock,
                 return_value=("실내등을 켰습니다.", "success"),
             ),
@@ -452,18 +452,18 @@ class TestRunExecutionIntegration:
 
     async def test_get_vehicle_status_real(self):
         """실 MCP 서버로 get_vehicle_status 호출 — 차량 상태 문자열 반환 확인."""
-        from app.agents.execution import _call_mcp_tool_raw
+        from app.core.mcp_client import call_mcp_tool_raw
 
-        result_text, status = await _call_mcp_tool_raw("get_vehicle_status", {})
+        result_text, status = await call_mcp_tool_raw("get_vehicle_status", {})
 
         assert status == "success"
         assert any(kw in result_text for kw in ("속도", "연료", "배터리", "km/h"))
 
     async def test_control_climate_real(self):
         """실 MCP 서버로 control_climate 호출 — 성공 메시지 반환 확인."""
-        from app.agents.execution import _call_mcp_tool_raw
+        from app.core.mcp_client import call_mcp_tool_raw
 
-        result_text, status = await _call_mcp_tool_raw(
+        result_text, status = await call_mcp_tool_raw(
             "control_climate", {"temperature": 24, "on": True}
         )
 
@@ -472,16 +472,17 @@ class TestRunExecutionIntegration:
 
     async def test_control_wiper_real(self):
         """실 MCP 서버로 control_wiper 호출."""
-        from app.agents.execution import _call_mcp_tool_raw
+        from app.core.mcp_client import call_mcp_tool_raw
 
-        result_text, status = await _call_mcp_tool_raw("control_wiper", {"on": True})
+        result_text, status = await call_mcp_tool_raw("control_wiper", {"on": True})
 
         assert status == "success"
         assert "와이퍼" in result_text
 
     async def test_all_12_tools_callable(self):
         """12종 tool 모두 호출 가능 (파라미터 최솟값으로)."""
-        from app.agents.execution import _call_mcp_tool_raw, MCP_TOOLS
+        from app.agents.execution import MCP_TOOLS
+        from app.core.mcp_client import call_mcp_tool_raw
 
         sample_params = {
             "control_climate":   {"temperature": 20, "on": True},
@@ -502,7 +503,7 @@ class TestRunExecutionIntegration:
         for tool in MCP_TOOLS:
             params = sample_params.get(tool, {})
             try:
-                _, status = await _call_mcp_tool_raw(tool, params)
+                _, status = await call_mcp_tool_raw(tool, params)
                 if status == "error":
                     errors.append(f"{tool}: error 응답")
             except Exception as exc:
