@@ -174,7 +174,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
     new_tool_calls: List[Dict[str, Any]] = []
     new_vehicle_state: Dict[str, Any] = dict(vehicle_state)
 
-    logger.info("execution_node 시작: plan 스텝 %d 개", len(plan))
+    logger.info("execution_node 시작: plan=%s", plan)
 
     for step in plan:
         # ── 1. Plan step → tool call 추출 ──────────────────────────────────
@@ -254,7 +254,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             else:
                 new_vehicle_state[f"last_{tool_name}"] = result_text
 
-    logger.info("execution_node 완료: 신규 tool_calls %d 개", len(new_tool_calls))
+    logger.info("execution_node 완료: 신규 tool_calls=%s", new_tool_calls)
 
     # error_count 반환 없음 — observe_node 가 단일 권위자
     return {

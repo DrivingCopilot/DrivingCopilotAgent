@@ -11,6 +11,10 @@
 import logging
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+load_dotenv()  # app.core.config 가 import 시점에 os.getenv 를 읽으므로 가장 먼저 실행
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
