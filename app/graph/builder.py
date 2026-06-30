@@ -6,13 +6,15 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
 추후 규모가 커지면 nodes.py / edges.py로 분리.
 
 흐름:
-    START → supervisor → [knowledge | execution | perception | supervisor | END]
-                ↑               ↓             ↓              ↓
-             observe ←──────────┴─────────────┴──────────────┘
-                ↓ (무조건)
-            reflect
-                ↓
-          [supervisor | END]
+    START → supervisor → [knowledge | execution | perception | supervisor | finalize(__end__)]
+                                  ↓           ↓            ↓
+              ┌── observe ←───────┴───────────┘            │
+              │       ↓                hazard 감지 → execution 직행 → observe
+              │   reflect              hazard 없음 → observe
+              │       ↓                (route_after_perception)
+              └─[supervisor | finalize(__end__)]
+                        ↓
+                    finalize → END
 """
 
 from __future__ import annotations
@@ -56,6 +58,22 @@ def route_next(state: AgentState) -> str:
     return "__end__"
 
 
+def route_after_perception(state: AgentState) -> str:
+    """
+    perception_node가 hazard(비/터널/경고등)를 감지해 plan을 채웠으면
+    execution으로 직행한다 — 멀티모달 트리거(계획서 6번 항목).
+    supervisor의 LLM 판단을 거치지 않는 이유는 app/agents/perception.py 상단
+    주석 참고. hazard가 없으면(plan 비어있음) observe로 보내 결과 검증 흐름에
+    합류시킨다 — 모든 agent는 observe를 거친다는 원칙 유지.
+    """
+    if state.get("plan"):
+        logger.info("route_after_perception: → execution (멀티모달 자동 트리거)")
+        return "execution"
+
+    logger.info("route_after_perception: → observe")
+    return "observe"
+
+
 def route_after_reflect(state: AgentState) -> str:
     """
     reflect_node가 반환한 next_agent 값을 보고 다음을 결정.
@@ -76,9 +94,6 @@ def route_after_reflect(state: AgentState) -> str:
 # ---------------------------------------------------------------------------
 # StateGraph 조립
 # ---------------------------------------------------------------------------
-
-# @lru_cache가 중간에서 알아서 캐시된 걸 돌려줌. build_graph()할때마다 그래프 다시 컴파일 안해도 되게 함
-# 한번 컴파일해놓고 계속 사용.
 
 @lru_cache(maxsize=1)
 def build_graph():
@@ -116,15 +131,25 @@ def build_graph():
         },
     )
 
-    # 4. 각 Agent → observe (실행 결과 검증)
+    # 4. knowledge/execution → observe (실행 결과 검증)
     graph.add_edge("knowledge", "observe")
     graph.add_edge("execution", "observe")
-    graph.add_edge("perception", "observe")
+
+    # 4-1. perception → 멀티모달 트리거 분기
+    #   hazard 감지(plan 있음) → execution 직행, 없으면 observe로 합류
+    graph.add_conditional_edges(
+        "perception",
+        route_after_perception,
+        {
+            "execution": "execution",
+            "observe": "observe",
+        },
+    )
 
     # 5. observe → reflect (무조건)
     graph.add_edge("observe", "reflect")
 
-    # 6. reflect → [supervisor | END] 조건부 분기
+    # 6. reflect → [supervisor | finalize] 조건부 분기
     graph.add_conditional_edges(
         "reflect",
         route_after_reflect,
@@ -134,6 +159,7 @@ def build_graph():
         },
     )
 
+    # 7. finalize → END (엔티티 메모리 저장 후 종료)
     graph.add_edge("finalize", END)
 
     return graph.compile()
