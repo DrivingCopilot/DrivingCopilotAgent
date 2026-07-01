@@ -7,7 +7,10 @@ LangGraph StateGraph 기반 Multi-Agent 오케스트레이션.
 흐름:
     START → supervisor → [knowledge | execution | perception | supervisor | END]
                 ↑               |           |            |
-                └───────────────┴───────────┴────────────┘
+                └───────────────┴───────────┘            |
+                                                hazard 감지 시 execution 직행
+                                                (route_after_perception),
+                                                없으면 supervisor 로 복귀
 """
 
 from __future__ import annotations
@@ -43,6 +46,21 @@ def route_next(state: AgentState) -> str:
     return "__end__"
 
 
+def route_after_perception(state: AgentState) -> str:
+    """
+    perception_node가 hazard(비/터널/경고등)를 감지해 plan을 채웠으면
+    execution으로 직행한다 — 멀티모달 트리거(계획서 6번 항목).
+    supervisor의 LLM 판단을 거치지 않는 이유는 app/agents/perception.py 상단
+    주석 참고. plan이 비어있으면(hazard 없음) 평소처럼 supervisor로 복귀한다.
+    """
+    if state.get("plan"):
+        logger.info("route_after_perception: → execution (멀티모달 자동 트리거)")
+        return "execution"
+
+    logger.info("route_after_perception: → supervisor")
+    return "supervisor"
+
+
 # ---------------------------------------------------------------------------
 # StateGraph 조립
 # ---------------------------------------------------------------------------
@@ -74,7 +92,14 @@ def build_graph():
 
     graph.add_edge("knowledge", "supervisor")
     graph.add_edge("execution", "supervisor")
-    graph.add_edge("perception", "supervisor")
+    graph.add_conditional_edges(
+        "perception",
+        route_after_perception,
+        {
+            "execution": "execution",
+            "supervisor": "supervisor",
+        },
+    )
 
     return graph.compile()
 
