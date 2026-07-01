@@ -19,11 +19,16 @@ __pycache__/
 *.pyo
 
 
-# Qdrant_storage/ — 런타임 임시 파일
-qdrant_storage/
+# 런타임 데이터 (Qdrant 로컬 저장소)
+data/qdrant_storage/
 **/.lock
 
 # 개발자 개인 에디터 설정
-.vscode  
+.vscode
+.antigravitycli
 
 gemini.md
+Driving_Copilot_Plan.md
+Intern_Project_Plan.md
+.Driving_Copilot_Plan.md
+.Intern_Project_Plan.md
