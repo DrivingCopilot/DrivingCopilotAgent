@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Dict, Any
 
 
@@ -9,7 +10,7 @@ import sqlite3
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME
+from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME, DB_PATH
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
@@ -153,29 +154,118 @@ Your task is to convert the user's natural language question into a strictly val
     
     return best_sql
 
-def validate_sql_and_execute(generated_sql: str, db: SQLDatabase) -> Any:
-    
-    forbidden_statements = ["DROP", "DELETE", "ALTER", "INSERT", "UPDATE"]
-    upper_sql = generated_sql.upper()
-    if any (stmt in upper_sql for stmt in forbidden_statements):
-        logger.error("Generated SQL contains forbidden statements.")
-        return {"success": False, "error": "Generated SQL contains forbidden statements."}
+# ---------------------------------------------------------------------------
+# SQL 검증 3단계 파이프라인 (계획서 §4.2 "구문 + EXPLAIN 분석 후 실행")
+#   1) validate_syntax    — 구문/보안 정적 검증 (DB 연결 불필요)
+#   2) validate_plan      — EXPLAIN QUERY PLAN 정적 분석 (실제 실행 X)
+#   3) execute_validated  — 검증 통과 SQL 실제 실행
+# ---------------------------------------------------------------------------
 
-    try: 
-        conn = sqlite3.connect(db.db_uri)
-        cursor = conn.cursor()
-        explain_query = f"EXPLAIN QUERY PLAN {generated_sql}"
-        cursor.execute(explain_query)
+# 읽기 전용 허용 prefix / 금지 키워드 (Backend execute_db 정책과 동일선상)
+_READONLY_PREFIXES = ("SELECT", "WITH", "PRAGMA")
+_FORBIDDEN_KEYWORDS = (
+    "DROP", "DELETE", "ALTER", "INSERT", "UPDATE",
+    "CREATE", "REPLACE", "TRUNCATE", "ATTACH", "DETACH", "GRANT",
+)
+# 문자열 리터럴 제거용 — LIKE '%delete%' 같은 값이 키워드 오탐을 일으키지 않도록 한다.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
 
-        cursor.execute(generated_sql)
-        columns = [description[0] for description in cursor.description]
-        rows = cursor.fetchall()
 
-        return {"success": True, "data": [dict(zip(columns, row)) for row in rows]}
+def _clean_sql(raw_sql: str) -> str:
+    """LLM 출력에서 마크다운 펜스/잉여 공백/후행 세미콜론을 제거한다."""
+    sql = raw_sql.strip()
+    sql = re.sub(r"^```(?:sql)?|```$", "", sql, flags=re.IGNORECASE).strip()
+    return sql.rstrip(";").strip()
 
+
+def validate_syntax(sql: str) -> Dict[str, Any]:
+    """
+    [1단계] 구문/보안 검증 — DB 연결 없이 정적으로 수행.
+    읽기 전용 단일 문장(SELECT/WITH/PRAGMA)만 통과시킨다.
+    """
+    if not sql:
+        return {"success": False, "stage": "syntax", "error": "빈 SQL 입니다."}
+
+    # 다중 문장 차단 (세미콜론을 통한 추가 구문 주입 방지)
+    if ";" in sql:
+        return {"success": False, "stage": "syntax",
+                "error": "다중 SQL 문장은 허용되지 않습니다."}
+
+    upper = sql.upper()
+
+    # 화이트리스트 prefix — 읽기 전용 쿼리만 허용
+    if not upper.startswith(_READONLY_PREFIXES):
+        return {"success": False, "stage": "syntax",
+                "error": "SELECT/WITH/PRAGMA 로 시작하는 읽기 전용 쿼리만 허용됩니다."}
+
+    # 금지 키워드 차단 (WITH CTE 뒤에 숨은 DML/DDL 까지 검출). 문자열 리터럴은 제외.
+    scan_target = _STRING_LITERAL_RE.sub("''", upper)
+    if any(re.search(rf"\b{kw}\b", scan_target) for kw in _FORBIDDEN_KEYWORDS):
+        return {"success": False, "stage": "syntax",
+                "error": "쓰기/DDL 구문이 포함되어 있습니다. (읽기 전용만 허용)"}
+
+    return {"success": True, "stage": "syntax", "sql": sql}
+
+
+def validate_plan(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
+    """
+    [2단계] EXPLAIN 정적 분석 — 실제 실행 없이 테이블/컬럼/구문 유효성을 검증한다.
+    잘못된 테이블·컬럼 참조나 구문 오류가 여기서 sqlite3.Error 로 잡힌다.
+    """
+    try:
+        rows = conn.execute(f"EXPLAIN QUERY PLAN {sql}").fetchall()
+        plan = [row[-1] for row in rows]  # 각 행의 detail(마지막) 컬럼
+        return {"success": True, "stage": "explain", "plan": plan}
     except sqlite3.Error as e:
-        # 에러 발생 시 DB Exception 캡처 (이후 LangGraph에서 재생성 루프에 활용) 
-        return {"success": False, "error": f"DB exception: {str(e)}"}
+        return {"success": False, "stage": "explain", "error": f"EXPLAIN 검증 실패: {e}"}
+
+
+def execute_validated(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
+    """
+    [3단계] 실행 — 1·2단계를 통과한 SQL을 실제 실행하고 결과를 dict 리스트로 반환한다.
+    """
+    try:
+        cursor = conn.execute(sql)
+        columns = [d[0] for d in cursor.description] if cursor.description else []
+        rows = cursor.fetchall()
+        return {"success": True, "stage": "execute",
+                "data": [dict(zip(columns, row)) for row in rows]}
+    except sqlite3.Error as e:
+        # DB Exception 캡처 (LangGraph 재생성 루프에 활용)
+        return {"success": False, "stage": "execute", "error": f"DB exception: {e}"}
+
+
+def validate_sql_and_execute(generated_sql: str, db_path: str = DB_PATH) -> Dict[str, Any]:
+    """
+    SQL 검증 3단계 파이프라인 오케스트레이터.
+
+      1. validate_syntax    → 2. validate_plan → 3. execute_validated
+
+    한 단계라도 실패하면 즉시 중단하고 {"success": False, "stage": ..., "error": ...} 를
+    반환한다. 호출부(LangGraph)는 실패 stage/error 를 읽어 SQL 재생성 루프(최대 3회)에 활용.
+    성공 시 {"success": True, "stage": "execute", "data": [...], "plan": [...]} 를 반환한다.
+    """
+    sql = _clean_sql(generated_sql)
+
+    # 1단계: DB 연결 전 정적 구문/보안 검증
+    syntax = validate_syntax(sql)
+    if not syntax["success"]:
+        return syntax
+    sql = syntax["sql"]
+
+    # 읽기 전용 모드로 연결 → 드라이버 레벨에서 쓰기 자체를 차단
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        # 2단계: EXPLAIN 정적 분석
+        plan = validate_plan(sql, conn)
+        if not plan["success"]:
+            return plan
+
+        # 3단계: 실행
+        result = execute_validated(sql, conn)
+        if result["success"]:
+            result["plan"] = plan["plan"]
+        return result
     finally:
         conn.close()
 

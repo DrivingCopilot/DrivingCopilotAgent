@@ -4,24 +4,13 @@ from typing import Any, Dict
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI 
 from app.graph.state import AgentState
+from app.graph import ws as _ws
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 
 logger = logging.getLogger(__name__)
 
-# --- Mock external dependencies ---
-# In a real scenario, these would be imported from other modules in the project.
-
-class MockWebsocketManager:
-    async def send_status(self, message: str):
-        logger.info(f"WS_MOCK_SEND: {message}")
-        
-    def send_status_sync(self, message: str):
-        # Synchronous fallback if the node is not async
-        logger.info(f"WS_MOCK_SEND: {message}")
-
-websocket_manager = MockWebsocketManager()
 
 def get_agent_registry() -> list[dict]:
     """Mock registry to fetch available agents dynamically."""
@@ -88,7 +77,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     """
     
     # 1. WebSocket 실시간 스트리밍 연동
-    await websocket_manager.send_status(json.dumps({"type": "status", "data": "Planning next steps..."}))
+    await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Planning next steps..."}))
     
     messages = state.get("messages", [])
     plan = state.get("plan", [])
@@ -105,7 +94,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     
     if timeout_err >= 2 or param_err >= 2 or sql_err >= 3:
         fallback_msg = AIMessage(content="시스템 오류가 반복 발생하여 안전을 위해 작업을 종료합니다. (수퍼바이저 대안 개입)")
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "System error limit reached. Terminating."}))
         return {
             "messages": [fallback_msg],
             "next_agent": "__end__",
@@ -158,7 +147,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         # 실시간 토큰 스트리밍 구현
         async for chunk in llm.astream(messages_to_send):
             if chunk.content:
-                await websocket_manager.send_status(json.dumps({"type": "text", "data": chunk.content}))
+                await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": chunk.content}))
                 content += chunk.content
         
         content = content.strip()
@@ -180,7 +169,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         updated_error_count = dict(error_count) 
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
         
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
         return {
             "error_count": updated_error_count,
             "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
@@ -190,7 +179,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
          logger.error(f"Unexpected error during LLM invocation: {e}")
          return {"next_agent": "__end__"}
         
-    await websocket_manager.send_status(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
+    await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
     
     # AgentState 업데이트 시 messages 리스트에 수퍼바이저의 판단 결과(reasoning)를 AIMessage 형태로 추가
     result = {

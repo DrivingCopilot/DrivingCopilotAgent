@@ -6,15 +6,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from app.graph.state import AgentState
+from app.graph import ws as _ws
 from app.core.mcp_client import call_mcp_tool_once
 
 logger = logging.getLogger(__name__)
-
-class MockWebsocketManager:
-    async def send_status(self, message: str):
-        logger.info(f"WS_MOCK_SEND: {message}")
-
-websocket_manager = MockWebsocketManager()
 
 
 async def _call_knowledge_tool(tool_name: str, params: Dict[str, Any]) -> str:
@@ -73,7 +68,7 @@ Workflow:
 """
 
 async def knowledge_node(state: AgentState) -> Dict[str, Any]:
-    await websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent retrieving context..."}))
+    await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent retrieving context..."}))
     
     messages = state.get("messages", [])
     plan = state.get("plan", [])
@@ -112,7 +107,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         # Pop the completed plan step
         new_plan = plan[1:] if plan else []
         
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge retrieval complete. Returning to Supervisor."}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge retrieval complete. Returning to Supervisor."}))
         
         return {
             "messages": new_messages,
@@ -127,7 +122,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         error_count = state.get("error_count", {})
         error_count["parameter"] = error_count.get("parameter", 0) + 1
         
-        await websocket_manager.send_status(json.dumps({"type": "status", "data": f"Knowledge agent failed: {str(e)[:50]}..."}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"Knowledge agent failed: {str(e)[:50]}..."}))
         
         return {
             "messages": [AIMessage(content=f"Knowledge Agent encountered an error: {e}")],

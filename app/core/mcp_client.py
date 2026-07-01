@@ -51,9 +51,9 @@ async def call_mcp_tool_once(
 
     Returns:
         (result_text, status, error_type, error_msg)
-        - status    : "success" | "fail"
-        - error_type: "" | "timeout" | "parameter"  (fail 시에만 의미 있음)
-        - error_msg : 원본 에러 메시지               (fail 시에만 의미 있음)
+        - status    : "success" | "error"
+        - error_type: "" | "timeout" | "parameter"  
+        - error_msg : 원본 에러 메시지              
     """
     try:
         result_text, raw_status = await asyncio.wait_for(
