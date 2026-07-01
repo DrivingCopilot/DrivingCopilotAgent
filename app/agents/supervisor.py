@@ -1,3 +1,8 @@
+# app/agents/supervisor.py
+#
+# Supervisor Agent — LangGraph 노드로 동작하며 하위 Agent(Knowledge/Execution/Perception)를 조율한다.
+# Agent Card 기반 동적 레지스트리를 참조해 Plan-and-Execute + CoT + Reflexion 루프를 수행한다.
+
 import json
 import logging
 from typing import Any, Dict, List
@@ -11,9 +16,6 @@ from app.core.config import AGENT_PORT
 from app.core.json_utils import extract_first_json_object
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
-
 
 logger = logging.getLogger(__name__)
 
@@ -230,8 +232,9 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         logger.error(f"supervisor_node 완료 (JSON 파싱 실패): {e}. Raw content: {content}")
         updated_error_count = dict(error_count)
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
-        
+
         await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Output parsing failed. Attempting self-recovery..."}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "parse_error"}))
         return {
             "error_count": updated_error_count,
             "feedback": f"Failed to parse your last response as valid JSON. Ensure strictly valid JSON format. Error: {str(e)}",
