@@ -11,11 +11,16 @@
 import logging
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+load_dotenv()  # app.core.config 가 import 시점에 os.getenv 를 읽으므로 가장 먼저 실행
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.graph import ws as graph_ws
 from app.core import config
+from app.a2a.router import router as a2a_router
 from app.api.http import router as http_router
 from app.api.websocket import router as ws_router, streamer_proxy
 
@@ -51,6 +56,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(a2a_router, tags=["A2A"])
 app.include_router(http_router, tags=["Supervisor"])
 app.include_router(ws_router, tags=["Supervisor-WS"])
 
