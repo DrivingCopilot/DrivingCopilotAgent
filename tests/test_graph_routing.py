@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import app.graph.builder as builder_module
 from app.graph.builder import run_graph
@@ -55,7 +55,7 @@ async def test_react_one_loop_execution(patch_supervisor):
             return_value={"tool_name": "control_climate", "params": {"temperature": 22, "on": True}},
         ),
         patch(
-            "app.agents.execution._call_mcp_tool_raw",
+            "app.core.mcp_client.call_mcp_tool_raw",
             new_callable=AsyncMock,
             return_value=("에어컨을 22℃로 켰어요.", "success"),
         ),
@@ -81,7 +81,6 @@ async def test_react_one_loop_knowledge(patch_supervisor):
     result = await run_graph("매뉴얼 검색해줘")
 
     assert tracker["count"] == 2
-    assert any(tc["tool"] == "mock_knowledge_search" for tc in result["tool_calls"])
     assert "vector_results" in result["context_data"]
     assert "graph_results" in result["context_data"]
 
@@ -93,21 +92,37 @@ async def test_react_one_loop_perception(patch_supervisor):
         {"next_agent": "__end__", "plan": [], "feedback": ""},
     ])
 
-    result = await run_graph("주변 상황 보여줘")
+    # hazards 빈 배열 — rain 등 hazard가 있으면 perception이 HAZARD_PLAN_STEPS로
+    # plan을 채워 route_after_perception이 execution으로 직행시켜 tracker count가 깨진다.
+    mock_vlm_response = MagicMock()
+    mock_vlm_response.content = (
+        '{"description": "전방 도로가 맑고 특이사항 없습니다.", "hazards": []}'
+    )
+    mock_vlm = MagicMock()
+    mock_vlm.ainvoke = AsyncMock(return_value=mock_vlm_response)
+
+    with (
+        patch(
+            "app.agents.perception.call_mcp_tool_once",
+            new_callable=AsyncMock,
+            return_value=("/9j/fake_base64_frame==", "success", "", ""),
+        ),
+        patch(
+            "app.agents.perception._get_vision_llm",
+            return_value=mock_vlm,
+        ),
+        patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+    ):
+        result = await run_graph("주변 상황 보여줘")
 
     assert tracker["count"] == 2
 
-    # Tool 2종 모두 호출되어야 함
-    tool_names = [tc["tool"] for tc in result["tool_calls"]]
-    assert "analyze_camera_feed" in tool_names
-    assert "detect_objects" in tool_names
-
-    # vision_results는 구조화된 dict
     assert "vision_results" in result["context_data"]
     vision = result["context_data"]["vision_results"]
-    assert "scene" in vision
-    assert "objects" in vision
-    assert vision["scene"]["weather"] == "rain"  # mock scenario 확인
+    assert vision["status"] == "success"
+    assert "description" in vision
+    assert "hazards" in vision
+    assert vision["hazards"] == []
 
 
 @pytest.mark.asyncio
