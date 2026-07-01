@@ -167,7 +167,6 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
     plan: List[str] = state.get("plan", [])
-    tool_calls_acc: List[Dict[str, Any]] = list(state.get("tool_calls", []))
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
     vehicle_state: Dict[str, Any] = dict(context_data.get("vehicle_state", {}))
 
@@ -258,9 +257,6 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
 
     # error_count 반환 없음 — observe_node 가 단일 권위자
     return {
-        "tool_calls": [*tool_calls_acc, *new_tool_calls],
-        "context_data": {
-            **context_data,
-            "vehicle_state": new_vehicle_state,
-        },
+        "tool_calls": new_tool_calls,
+        "context_data": {"vehicle_state": new_vehicle_state},
     }

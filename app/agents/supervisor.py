@@ -21,21 +21,9 @@ from app.core.json_utils import extract_first_json_object
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
-from app.memory.experience import build_situation
+from app.memory.experience import build_situation, get_experience_memory
 
 logger = logging.getLogger(__name__)
-
-# ExperienceMemory lazy-init 싱글톤
-_experience_memory = None
-
-
-def _get_experience_memory():
-    global _experience_memory
-    if _experience_memory is None:
-        from app.memory.experience import ExperienceMemory
-        _experience_memory = ExperienceMemory()
-    return _experience_memory
-
 
 # EntityMemory lazy-init 싱글톤
 _entity_memory = None
@@ -196,7 +184,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         situation_query = build_situation(user_query, route_type or "", vehicle_state)
         try:
             retrieved = await asyncio.to_thread(
-                _get_experience_memory().search,
+                get_experience_memory().search,
                 situation_query,
                 route_type or None,
                 EXPERIENCE_TOP_K,

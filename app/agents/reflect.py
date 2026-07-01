@@ -23,21 +23,9 @@ from langchain_openai import ChatOpenAI
 
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.memory.experience import build_situation
+from app.memory.experience import build_situation, get_experience_memory
 
 logger = logging.getLogger(__name__)
-
-# ExperienceMemory lazy-init 싱글톤
-_experience_memory = None
-
-
-def _get_experience_memory():
-    global _experience_memory
-    if _experience_memory is None:
-        from app.memory.experience import ExperienceMemory
-        _experience_memory = ExperienceMemory()
-    return _experience_memory
-
 
 REFLECT_FAILURE_PROMPT = """You are reflecting on a failed tool execution in a Driving Copilot system.
 Analyze the failure and generate a concise lesson for future attempts.
@@ -120,7 +108,7 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
         # ExperienceMemory 저장 (동기 함수 → asyncio.to_thread)
         try:
             await asyncio.to_thread(
-                _get_experience_memory().save,
+                get_experience_memory().save,
                 situation,
                 lesson,
                 route_type or "unknown",

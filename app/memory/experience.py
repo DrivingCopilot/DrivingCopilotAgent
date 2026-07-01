@@ -161,3 +161,14 @@ class ExperienceMemory:
         )
 
         logger.info("Qdrant 컬렉션 생성: %s", EXPERIENCE_COLLECTION_NAME)
+
+ # 파일 맨 아래에 추가
+_instance: ExperienceMemory | None = None
+
+
+def get_experience_memory() -> ExperienceMemory:
+    """프로세스 전체에서 ExperienceMemory 단일 인스턴스를 반환한다."""
+    global _instance
+    if _instance is None:
+        _instance = ExperienceMemory()
+    return _instance
