@@ -13,9 +13,9 @@ from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트�
 from app.core.config import (  # 전역 설정 상수 import
     MODEL_NAME,
     VECTOR_SIZE,
-    QDRANT_PATH,
     COLLECTION_NAME,
 )
+from app.services.qdrant_client import get_qdrant_client
 
 import logging  # 진행 상황 로깅용
 from pathlib import Path  # 파일 경로를 객체로 다루기 위한 모듈
@@ -23,7 +23,6 @@ from pathlib import Path  # 파일 경로를 객체로 다루기 위한 모듈
 from langchain_core.documents import Document        # LangChain 기본 문서 단위
 from langchain_huggingface import HuggingFaceEmbeddings  # LangChain 기반 HuggingFace 임베딩 래퍼
 from langchain_qdrant import QdrantVectorStore       # LangChain Qdrant 벡터스토어 래퍼
-from qdrant_client import QdrantClient               # Qdrant 클라이언트 (컬렉션 생성 등 직접 제어용)
 from qdrant_client.http import models as qmodels     # Qdrant 설정 모델 (VectorParams, Distance 등)
 
 logger = logging.getLogger(__name__)  # 현재 모듈 이름으로 로거 생성
@@ -51,10 +50,8 @@ class VehicleEmbedder:
             encode_kwargs={"normalize_embeddings": True}, # 코사인 유사도 계산을 위한 벡터 정규화
         )
 
-        # Qdrant 클라이언트 초기화 (로컬 파일 모드)
-        # path 인자를 사용하면 Docker 없이 로컬 파일로 저장됨
-        # A6000 서버 통합 시: QdrantClient(url="http://서버주소:6333")으로 교체
-        self._client = QdrantClient(path=QDRANT_PATH)
+        # 싱글톤 Qdrant 클라이언트 (로컬 파일 모드 락 충돌 방지)
+        self._client = get_qdrant_client()
 
         # 컬렉션이 없으면 자동 생성
         self._ensure_collection()

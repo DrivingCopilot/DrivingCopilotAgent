@@ -1,5 +1,12 @@
 
 import os
+from typing import Dict
+
+# app/core/config.py
+#
+# 프로젝트 전역 설정 상수 관리 모듈.
+# 모델, Qdrant, 경로 등 여러 서비스에서 공유하는 설정값을 한 곳에서 관리한다.
+# 설정 변경 시 이 파일만 수정하면 된다.
 
 # ---------------------------------------------------------------------------
 # 임베딩 모델
@@ -15,6 +22,13 @@ VECTOR_SIZE = 1024             # bge-m3 dense 벡터 차원
 QDRANT_PATH = "./data/qdrant_storage"       # 로컬 파일 모드 경로. Docker 전환 시 QDRANT_URL 사용
 QDRANT_URL = "http://localhost:6333"   # Docker/A6000 서버 모드 URL
 COLLECTION_NAME = "vehicle_manuals"    # Qdrant 컬렉션 이름
+EXPERIENCE_COLLECTION_NAME = "experience_memory"  # ReAct Reflect 실패 경험 컬렉션
+EXPERIENCE_TOP_K = 5                   # supervisor experience 검색 상위 결과 수
+WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (계획서 2.5)
+
+# 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
+ENTITY_PROFILE_PATH = "./data/user_profile.json"
+EXTRACTOR_MODEL_NAME = "qwen2-vl-1.5b-instruct-int4"
 
 # ---------------------------------------------------------------------------
 # Neo4j (Graph RAG)

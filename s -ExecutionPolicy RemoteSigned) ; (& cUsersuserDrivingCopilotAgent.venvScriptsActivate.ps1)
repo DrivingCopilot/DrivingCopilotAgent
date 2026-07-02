@@ -1,0 +1,88 @@
+warning: in the working copy of 'app/agents/reflect.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/agents/supervisor.py', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/app/agents/reflect.py b/app/agents/reflect.py[m
+[1mindex 30643ef..e4e9768 100644[m
+[1m--- a/app/agents/reflect.py[m
+[1m+++ b/app/agents/reflect.py[m
+[36m@@ -23,6 +23,7 @@[m [mfrom langchain_openai import ChatOpenAI[m
+ [m
+ from app.graph import ws as _ws[m
+ from app.graph.state import AgentState[m
+[32m+[m[32mfrom app.memory.experience import build_situation[m
+ [m
+ logger = logging.getLogger(__name__)[m
+ [m
+[36m@@ -78,11 +79,8 @@[m [masync def reflect_node(state: AgentState) -> Dict[str, Any]:[m
+         user_query = next([m
+             (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""[m
+         )[m
+[31m-        vehicle_state_summary = str(context_data.get("vehicle_state", {}))[:200][m
+[31m-        situation = ([m
+[31m-            f"query: {user_query} | route_type: {route_type} | "[m
+[31m-            f"vehicle_state: {vehicle_state_summary}"[m
+[31m-        )[m
+[32m+[m[32m        vehicle_state = context_data.get("vehicle_state", {})[m
+[32m+[m[32m        situation = build_situation(user_query, route_type, vehicle_state)[m
+ [m
+         # LLM 호출: lesson 생성[m
+         lesson = ""[m
+[36m@@ -112,8 +110,11 @@[m [masync def reflect_node(state: AgentState) -> Dict[str, Any]:[m
+             lesson = parsed.get("lesson", feedback)[m
+             logger.info("reflect: lesson 생성 완료 — %s", lesson)[m
+ [m
+[31m-        except (json.JSONDecodeError, Exception) as e:[m
+[31m-            logger.warning("reflect: lesson LLM 파싱 실패 (%s) — feedback 사용", e)[m
+[32m+[m[32m        except json.JSONDecodeError as e:[m
+[32m+[m[32m            logger.warning("reflect: lesson JSON 파싱 실패 (%s) — feedback 사용", e)[m
+[32m+[m[32m            lesson = feedback[m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            logger.warning("reflect: lesson LLM 호출 실패 (%s) — feedback 사용", e)[m
+             lesson = feedback[m
+ [m
+         # ExperienceMemory 저장 (동기 함수 → asyncio.to_thread)[m
+[1mdiff --git a/app/agents/supervisor.py b/app/agents/supervisor.py[m
+[1mindex 19746cd..b749eec 100644[m
+[1m--- a/app/agents/supervisor.py[m
+[1m+++ b/app/agents/supervisor.py[m
+[36m@@ -17,6 +17,7 @@[m [mfrom langchain_openai import ChatOpenAI[m
+ from app.graph import ws as _ws[m
+ from app.graph.state import AgentState[m
+ from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K[m
+[32m+[m[32mfrom app.memory.experience import build_situation[m
+ [m
+ logger = logging.getLogger(__name__)[m
+ [m
+[36m@@ -126,10 +127,12 @@[m [masync def supervisor_node(state: AgentState) -> Dict[str, Any]:[m
+         user_query = next([m
+             (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""[m
+         )[m
+[32m+[m[32m        vehicle_state = context_data.get("vehicle_state", {})[m
+[32m+[m[32m        situation_query = build_situation(user_query, route_type or "", vehicle_state)[m
+         try:[m
+             retrieved = await asyncio.to_thread([m
+                 _get_experience_memory().search,[m
+[31m-                user_query,[m
+[32m+[m[32m                situation_query,[m
+                 route_type or None,[m
+                 EXPERIENCE_TOP_K,[m
+             )[m
+[1mdiff --git a/app/memory/experience.py b/app/memory/experience.py[m
+[1mindex 8aa7716..1034228 100644[m
+[1m--- a/app/memory/experience.py[m
+[1m+++ b/app/memory/experience.py[m
+[36m@@ -25,6 +25,15 @@[m [mfrom app.services.qdrant_client import get_qdrant_client[m
+ logger = logging.getLogger(__name__)[m
+ [m
+ [m
+[32m+[m[32mdef build_situation(user_query: str, route_type: str, vehicle_state: dict | None = None) -> str:[m
+[32m+[m[32m    """save와 search가 동일한 임베딩 텍스트를 쓰도록 situation 문자열을 구성한다."""[m
+[32m+[m[32m    vehicle_state_summary = str(vehicle_state or {})[:200][m
+[32m+[m[32m    return ([m
+[32m+[m[32m        f"query: {user_query} | route_type: {route_type} | "[m
+[32m+[m[32m        f"vehicle_state: {vehicle_state_summary}"[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m
+ class ExperienceMemory:[m
+     """[m
+     실패 경험을 Qdrant에 누적하고 유사 상황을 검색한다.[m
