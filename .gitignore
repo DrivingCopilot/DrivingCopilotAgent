@@ -21,6 +21,7 @@ __pycache__/
 
 # 런타임 데이터 (Qdrant 로컬 저장소)
 data/qdrant_storage/
+**/qdrant_storage/
 **/.lock
 
 # 개발자 개인 에디터 설정
