@@ -21,13 +21,18 @@ __pycache__/
 
 # 런타임 데이터 (Qdrant 로컬 저장소)
 data/qdrant_storage/
+**/qdrant_storage/
 **/.lock
 
 # 개발자 개인 에디터 설정
 .vscode
+.antigravitycli
+
+gemini.md
 Driving_Copilot_Plan.md
 Intern_Project_Plan.md
-
+.Driving_Copilot_Plan.md
+.Intern_Project_Plan.md
 # 로컬 참고 문서 및 Claude Code 개인 설정
 docs/
 CLAUDE.md
