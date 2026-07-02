@@ -124,7 +124,7 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
             "context_data": {
                 **context_data,
                 "vision_results": {
-                    "status": "fail",
+                    "status": "error",
                     "error_type": error_type,
                     "error_msg": error_msg,
                 },
@@ -146,7 +146,7 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
             "context_data": {
                 **context_data,
                 "vision_results": {
-                    "status": "fail",
+                    "status": "error",
                     "error_type": "vlm",
                     "error_msg": str(exc),
                 },

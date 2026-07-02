@@ -26,9 +26,9 @@ class A2ATaskRequest(BaseModel):
     instruction: str
     context: Dict[str, Any] = {}
 
-
 class A2ATaskResponse(BaseModel):
     task_id: str
     status: str                       # "success" | "error"
     result: Dict[str, Any] = {}
     error: Optional[str] = None
+    error_type: Optional[str] = None  # error 시만: "timeout"|"parameter"|"invalid_tool"|"sql"
