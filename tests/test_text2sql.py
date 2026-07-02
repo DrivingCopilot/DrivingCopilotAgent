@@ -60,18 +60,8 @@ def test_few_shot_sql_success(mock_embeddings, mock_qdrant_client, mock_vector_s
     assert "SQL: SELECT * FROM dummy;" in result
 
 # 3. self_consistency Tests
-@patch("app.services.text2sql.SQLDatabase")
 @patch("app.services.text2sql.ChatOpenAI")
-@patch("app.services.text2sql.PromptTemplate")
-def test_self_consistency_success(mock_prompt, mock_chat, mock_sql_db):
-    # Mock chain object inside self_consistency
-    # We will patch the specific invoke method
-    # Actually, we need to mock the pipeline operator or just patch _generate_sql_from_llm
-    pass # Will rewrite using patch for the local function or chain
-
-@patch("app.services.text2sql.SQLDatabase")
-@patch("app.services.text2sql.ChatOpenAI")
-def test_self_consistency_majority_vote(mock_chat, mock_sqldb):
+def test_self_consistency_majority_vote(mock_chat):
     with patch("app.services.text2sql.PromptTemplate") as mock_prompt:
         # Mocking the chain behavior
         mock_chain = MagicMock()
@@ -93,9 +83,8 @@ def test_self_consistency_majority_vote(mock_chat, mock_sqldb):
         result = self_consistency("query", "table_info", "few_shots", n=5)
         assert result == "SELECT A FROM table"
 
-@patch("app.services.text2sql.SQLDatabase")
 @patch("app.services.text2sql.PromptTemplate")
-def test_self_consistency_empty(mock_prompt, mock_sqldb):
+def test_self_consistency_empty(mock_prompt):
     mock_chain = MagicMock()
     mock_chain.invoke.return_value = ""
     mock_prompt_instance = MagicMock()

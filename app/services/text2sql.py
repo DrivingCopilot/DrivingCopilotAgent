@@ -1,19 +1,16 @@
-import asyncio
 import logging
 import re
 from typing import Dict, Any
+from collections import Counter
 
-
-from mcp import ClientSession, StdioServerParameters
-from langchain_community.embeddings import HuggingFaceEmbeddings
 import sqlite3
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME, DB_PATH
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
-from langchain_community.utilities import SQLDatabase
 from langchain_core.prompts import PromptTemplate
 
 logger = logging.getLogger(__name__)
@@ -86,8 +83,6 @@ def few_shot_sql(query: str, k: int=3) -> Dict[str, str]:
     return prompt_text
 
 
-
-from collections import Counter
 
 def self_consistency(query: str, table_info: str, few_shot_examples: str, n: int = 5) -> str:
     """
@@ -268,9 +263,3 @@ def validate_sql_and_execute(generated_sql: str, db_path: str = DB_PATH) -> Dict
         return result
     finally:
         conn.close()
-
-        
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    
