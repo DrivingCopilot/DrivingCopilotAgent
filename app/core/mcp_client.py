@@ -54,9 +54,9 @@ async def call_mcp_tool_once(
 
     Returns:
         (result_text, status, error_type, error_msg)
-        - status    : "success" | "fail"
-        - error_type: "" | "timeout" | "parameter"  (fail 시에만 의미 있음)
-        - error_msg : 원본 에러 메시지               (fail 시에만 의미 있음)
+        - status    : "success" | "error"
+        - error_type: "" | "timeout" | "parameter"  (error 시에만 의미 있음)
+        - error_msg : 원본 에러 메시지               (error 시에만 의미 있음)
     """
     try:
         result_text, raw_status = await asyncio.wait_for(
@@ -66,16 +66,16 @@ async def call_mcp_tool_once(
         # MCP 서버가 isError 응답을 보낸 경우 → parameter 오류로 분류
         if raw_status == "error":
             logger.warning("MCP tool returned error: %s — %s", tool_name, result_text)
-            return result_text, "fail", "parameter", result_text
+            return result_text, "error", "parameter", result_text
 
         return result_text, "success", "", ""
 
     except asyncio.TimeoutError:
         error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
         logger.warning("MCP timeout: %s", tool_name)
-        return error_msg, "fail", "timeout", error_msg
+        return error_msg, "error", "timeout", error_msg
 
     except Exception as exc:
         err_str = str(exc)
         logger.error("MCP unexpected error: %s — %s", tool_name, exc)
-        return f"[error] {err_str}", "fail", "parameter", err_str
+        return f"[error] {err_str}", "error", "parameter", err_str

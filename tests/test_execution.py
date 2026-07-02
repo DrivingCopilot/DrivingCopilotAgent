@@ -138,7 +138,7 @@ class TestCallMcpToolOnce:
         assert "22℃" in result_text
 
     async def test_mcp_server_error_classified_as_parameter(self):
-        """MCP 서버가 isError 응답 → status='fail', error_type='parameter'."""
+        """MCP 서버가 isError 응답 → status='error', error_type='parameter'."""
         with patch(
             "app.core.mcp_client.call_mcp_tool_raw",
             new_callable=AsyncMock,
@@ -150,12 +150,12 @@ class TestCallMcpToolOnce:
                 "control_climate", {"temperature": 99}
             )
 
-        assert status == "fail"
+        assert status == "error"
         assert error_type == "parameter"
         assert error_msg != ""
 
     async def test_timeout_classified(self):
-        """TimeoutError → status='fail', error_type='timeout'."""
+        """TimeoutError → status='error', error_type='timeout'."""
         with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
             from app.agents.execution import _call_mcp_tool_once
 
@@ -163,7 +163,7 @@ class TestCallMcpToolOnce:
                 "control_climate", {}
             )
 
-        assert status == "fail"
+        assert status == "error"
         assert error_type == "timeout"
         assert "타임아웃" in result_text
 
@@ -180,11 +180,11 @@ class TestCallMcpToolOnce:
                 "control_climate", {"temperature": 99}
             )
 
-        assert status == "fail"
+        assert status == "error"
         assert error_type == "parameter"
 
     async def test_unknown_exception_classified_as_parameter(self):
-        """예상치 못한 예외 → status='fail', error_type='parameter'."""
+        """예상치 못한 예외 → status='error', error_type='parameter'."""
         with patch(
             "asyncio.wait_for",
             new_callable=AsyncMock,
@@ -196,15 +196,15 @@ class TestCallMcpToolOnce:
                 "control_climate", {}
             )
 
-        assert status == "fail"
+        assert status == "error"
         assert error_type == "parameter"
 
 
 class TestRunExecution:
     """run_execution: 상태 병합, WS 토큰 송출, 다양한 시나리오 통합 검증."""
 
-    async def test_tool_calls_accumulated(self):
-        """기존 tool_calls 에 새 결과가 누적되는지 확인."""
+    async def test_tool_calls_returns_new_only(self):
+        """run_execution 반환의 tool_calls 는 신규 1개만 담긴다 (기존 old_tool 미포함, 누적은 reducer 책임)."""
         state = _make_state(
             plan=["에어컨을 22도로 켠다"],
             tool_calls=[{"tool": "old_tool", "status": "success", "result": "이전 결과"}],
@@ -217,9 +217,9 @@ class TestRunExecution:
                 return_value={"tool_name": "control_climate", "params": {"temperature": 22, "on": True}},
             ),
             patch(
-                "app.core.mcp_client.call_mcp_tool_raw",
+                "app.agents.execution._call_mcp_tool_once",
                 new_callable=AsyncMock,
-                return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success"),
+                return_value=("에어컨을 켜고 온도를 22℃로 설정했어요.", "success", None, None),
             ),
             patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
@@ -227,10 +227,10 @@ class TestRunExecution:
             result = await run_execution(state)
 
         tool_calls = result["tool_calls"]
-        assert len(tool_calls) == 2
-        assert tool_calls[0]["tool"] == "old_tool"
-        assert tool_calls[1]["tool"] == "control_climate"
-        assert tool_calls[1]["status"] == "success"
+        assert len(tool_calls) == 1
+        assert all(tc["tool"] != "old_tool" for tc in tool_calls)
+        assert tool_calls[0]["tool"] == "control_climate"
+        assert tool_calls[0]["status"] == "success"
 
     async def test_fail_sets_error_type_and_error_msg(self):
         """tool 실패 시 error_type · error_msg 필드가 tool_calls 에 포함되는지 확인."""
@@ -253,7 +253,7 @@ class TestRunExecution:
             result = await run_execution(state)
 
         tc = result["tool_calls"][-1]
-        assert tc["status"] == "fail"
+        assert tc["status"] == "error"
         assert tc["error_type"] == "timeout"
         assert tc["error_msg"] != ""
 
@@ -407,8 +407,8 @@ class TestRunExecution:
         assert "last_status_report" in vehicle_state
         assert "60km/h" in vehicle_state["last_status_report"]
 
-    async def test_context_data_preserved(self):
-        """기존 context_data(vector_results 등)가 덮어씌워지지 않는지 확인."""
+    async def test_context_data_returns_vehicle_state_only(self):
+        """run_execution 은 vehicle_state 만 반환한다 (기존 context_data 와의 병합은 reducer 책임)."""
         state = _make_state(
             plan=["조명을 켠다"],
             context_data={"vector_results": ["매뉴얼 청크"], "vehicle_state": {}},
@@ -421,16 +421,17 @@ class TestRunExecution:
                 return_value={"tool_name": "control_lighting", "params": {"on": True}},
             ),
             patch(
-                "app.core.mcp_client.call_mcp_tool_raw",
+                "app.agents.execution._call_mcp_tool_once",
                 new_callable=AsyncMock,
-                return_value=("실내등을 켰습니다.", "success"),
+                return_value=("실내등을 켰습니다.", "success", None, None),
             ),
             patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
         ):
             from app.agents.execution import run_execution
             result = await run_execution(state)
 
-        assert result["context_data"].get("vector_results") == ["매뉴얼 청크"]
+        assert set(result["context_data"].keys()) == {"vehicle_state"}
+        assert result["context_data"]["vehicle_state"]["last_control_lighting"] == "실내등을 켰습니다."
 
 
 # ---------------------------------------------------------------------------

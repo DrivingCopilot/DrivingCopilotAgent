@@ -1,3 +1,5 @@
+from typing import Dict
+
 # app/core/config.py
 #
 # 프로젝트 전역 설정 상수 관리 모듈.
@@ -18,6 +20,13 @@ VECTOR_SIZE = 1024             # bge-m3 dense 벡터 차원
 QDRANT_PATH = "./data/qdrant_storage"  # 로컬 파일 모드 경로. Docker 전환 시 QDRANT_URL 사용
 QDRANT_URL = "http://localhost:6333"   # Docker/A6000 서버 모드 URL
 COLLECTION_NAME = "vehicle_manuals"    # Qdrant 컬렉션 이름
+EXPERIENCE_COLLECTION_NAME = "experience_memory"  # ReAct Reflect 실패 경험 컬렉션
+EXPERIENCE_TOP_K = 5                   # supervisor experience 검색 상위 결과 수
+WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (계획서 2.5)
+
+# 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
+ENTITY_PROFILE_PATH = "./data/user_profile.json"
+EXTRACTOR_MODEL_NAME = "qwen2-vl-1.5b-instruct-int4"
 
 ## 파서와 청커는 일단 넣긴 했는데 다른 코드에서 쓸거 같지 않은 지엽적인 값이라 안넣었어
 # ---------------------------------------------------------------------------
@@ -48,6 +57,17 @@ ALLOWED_ORIGINS = [
 ]
 
 # ---------------------------------------------------------------------------
+
+# Observe 노드 재시도 정책 (계획서 5절)
+# ---------------------------------------------------------------------------
+
+MAX_RETRY: Dict[str, int] = {
+    "timeout": 2,
+    "parameter": 2,
+    "invalid_tool": 1,
+    "sql": 3,
+}
+
 # MCP 서버 (DrivingCopilotBackend/mcp_server.py)
 # ---------------------------------------------------------------------------
 
