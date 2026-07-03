@@ -1,0 +1,202 @@
+[
+  {
+    "id": "multi_001",
+    "route_type": "multi",
+    "query": "지금 타이어 공기압 알려주고, 표준 공기압이 얼만지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "최신 타이어 공기압은 FL 33, FR 34, RL 35, RR 35 psi입니다. 장착 타이어별 표준 공기압은 235/60R18과 235/55R19가 앞 230 kPa(33 psi)/뒤 250 kPa(36 psi), 255/40R21이 앞 230 kPa(33 psi)/뒤 260 kPa(38 psi)입니다.",
+    "relevant_chunk_ids": ["2c3249dad4f14876af12c7f07cf80eac"],
+    "expected_sql": "SELECT tire FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "multi_002",
+    "route_type": "multi",
+    "query": "현재 배터리 전압 알려주고, 배터리 오래 쓰려면 어떻게 관리해야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "현재 배터리 전압은 12.3V입니다. 배터리를 오래 쓰려면 수시로 점검하고 청결하게 유지하며, 재충전·점검 전 시동과 전기 장치를 끄고, 단자와 연결부를 깨끗이 조인 뒤 그리스로 코팅하십시오. 분리할 때는 - 단자부터, 장착할 때는 + 단자부터 연결합니다.",
+    "relevant_chunk_ids": ["04ded34f3bff471085e0ad410e342c51"],
+    "expected_sql": "SELECT battery FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "multi_003",
+    "route_type": "multi",
+    "query": "지금 경고등 켜진 거 있는지 확인하고, ESC 경고등이 계속 켜져 있으면 어떻게 해야 하는지도 알려줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "warning_lights"},
+    "expected_answer": "켜진 경고등이 없습니다. 참고로 ESC 작동 표시등은 시동 3초 후에도 꺼지지 않거나 주행 중 켜지면 ESC 장치 이상일 수 있으니 당사 직영 하이테크센터나 블루핸즈에서 점검을 받으십시오.",
+    "relevant_chunk_ids": ["045f65282cdb4e22a0dd73c9a27d1441"],
+    "expected_sql": null
+  },
+  {
+    "id": "multi_004",
+    "route_type": "multi",
+    "query": "아직 해결 안 된 경고 코드 목록 알려주고, 주행 중 브레이크 경고등 켜지면 어떻게 대처해야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "미해결 진단 코드는 P0301, P0420입니다. 주행 중 브레이크 경고등이 켜지면 브레이크 계통 이상 신호이므로 안전한 장소에 차를 정지시키고, 제동이 되지 않으면 페달을 강하게 밟고 엔진 브레이크와 전자식 파킹 브레이크를 함께 사용하십시오. 브레이크액을 보충해도 계속 켜지면 하이테크센터나 블루핸즈에서 점검을 받으세요.",
+    "relevant_chunk_ids": ["35f9f0418df44c379e1e76fd9a0e6b6f"],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE resolved = 0"
+  },
+  {
+    "id": "multi_005",
+    "route_type": "multi",
+    "query": "심각도가 High인 코드 뭐뭐 있는지 보고, 에어백 경고등이 계속 켜져 있으면 문제가 있는 건지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "심각도가 High인 진단 코드는 P0301, U0100입니다. 에어백 경고등은 시동 'ON' 시 켜지지 않거나 3~6초 이후에도 계속 켜져 있거나 깜빡이거나 주행 중 켜지면 안전벨트 프리텐셔너 등 시스템 이상일 수 있으니 당사 직영 하이테크센터나 블루핸즈에서 신속하게 점검을 받으십시오.",
+    "relevant_chunk_ids": ["1ad0b4d60aa24173be260e9b0bdea838"],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE severity = 'High'"
+  },
+  {
+    "id": "multi_006",
+    "route_type": "multi",
+    "query": "마지막으로 엔진오일 교환한 게 언제인지 알려주고, 엔진 오일량은 어떻게 확인하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "마지막 엔진오일 교환일은 2025-10-15입니다. 엔진 오일량은 차량을 평지에 주차하고 엔진을 예열한 뒤 시동을 끄고 약 15분 기다린 다음, 레벨 게이지를 뽑아 닦고 다시 꽂았다 뽑아 오일양이 F-L선 사이에 있는지 확인하십시오. L선 이하이면 F선까지 보충하세요.",
+    "relevant_chunk_ids": ["1f8f9c68715340ff98d35aad11289aea"],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Engine Oil%' ORDER BY date DESC LIMIT 1"
+  },
+  {
+    "id": "multi_007",
+    "route_type": "multi",
+    "query": "가장 최근에 정비받은 게 언제인지 알려주고, 냉각수는 어떻게 점검하고 보충하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 최근 정비일은 2026-05-10입니다. 냉각수는 엔진이 식었을 때 후드를 열고 보조 탱크 옆면 표시의 냉각수량이 최소선(MIN)과 최대선(MAX) 사이에 있는지 확인하고, 최소선에 가까우면 부동액과 증류수를 혼합 비율표대로 섞어 최대선까지 보충한 뒤 캡을 완전히 잠그십시오. 엔진이 뜨거울 때 캡을 열면 화상 위험이 있습니다.",
+    "relevant_chunk_ids": ["1b5cefcc9ab541458158a52d896bd529"],
+    "expected_sql": "SELECT MAX(date) AS last_date FROM maintenance_log"
+  },
+  {
+    "id": "multi_008",
+    "route_type": "multi",
+    "query": "지금 연료 얼마나 남았는지 보고, 가장 가까운 주유소로 안내해줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "주유소"},
+    "expected_answer": "현재 연료 잔량은 45.3입니다. 연료 상태를 확인했으니, 요청하신 대로 가장 가까운 '주유소'(으)로 길 안내를 시작합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT fuel FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "multi_009",
+    "route_type": "multi",
+    "query": "심각하면서 아직 해결 안 된 코드 있는지 보고, 조향 안전 경고등 색깔은 뭘 의미하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "심각도가 High이면서 미해결인 코드는 P0301입니다. 조향 안전 경고등은 시동 'ON' 시 주황색으로 약 3초 켜졌다 꺼지며, 전방/측방 안전 기능이 작동할 때는 빨간색으로 깜빡이고, 기능 미설정이거나 이상·고장이 있으면 주황색으로 계속 켜집니다. 이물질 제거 후에도 계속 켜지면 하이테크센터나 블루핸즈에서 점검을 받으세요.",
+    "relevant_chunk_ids": ["29b7507aaff748afa4319460e00eb69a"],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE severity = 'High' AND resolved = 0"
+  },
+  {
+    "id": "multi_010",
+    "route_type": "multi",
+    "query": "배터리 몇 퍼센트인지 알려주고, 추운 날씨에 배터리 관리할 때 주의할 점도 알려줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "battery"},
+    "expected_answer": "배터리는 90% 입니다. 추운 날씨에는 배터리를 항상 완전 충전 상태로 유지하십시오. 특히 매우 추운 날씨에 충전 부족 상태가 되면 배터리 내부 액체가 얼어 케이스가 파손될 수 있고, 블랙박스를 장착한 경우 방전을 막기 위해 주행 중일 때만 사용하도록 설정하세요.",
+    "relevant_chunk_ids": ["0fadad4b088144dd8fadd699a0270f69"],
+    "expected_sql": null
+  },
+  {
+    "id": "multi_011",
+    "route_type": "multi",
+    "query": "이번까지 총 주행 거리 알려주고, 배기가스를 줄이려면 차량 관리를 어떻게 해야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "기록된 총 주행 거리는 180.7 km입니다. 배기가스를 줄이려면 안내된 점검 사항을 철저히 이행하고, 배기가스 제어 장치 관련 정비는 임의로 하지 말고 하이테크센터나 블루핸즈에서 받으십시오. 연료가 전부 소모될 때까지 주행하지 말고, 배기가스 측정 전 약 15분간 시동을 걸어 정상 온도(80~95°C)로 맞추세요.",
+    "relevant_chunk_ids": ["0ea18444c77a431bb239b15c2e6f5756"],
+    "expected_sql": "SELECT SUM(distance) AS total_distance FROM trip_history"
+  },
+  {
+    "id": "multi_012",
+    "route_type": "multi",
+    "query": "브레이크 패드 교체한 게 언제인지 알려주고, 주행 중 브레이크 경고등 켜지면 어떻게 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "브레이크 패드를 교체한 날짜는 2026-03-20입니다. 주행 중 브레이크 경고등이 켜지면 브레이크 계통 이상 신호이므로 안전한 장소에 차를 정지시키고, 제동이 되지 않으면 페달을 강하게 밟고 엔진 브레이크와 전자식 파킹 브레이크를 함께 사용한 뒤, 브레이크액을 보충해도 계속 켜지면 점검을 받으세요.",
+    "relevant_chunk_ids": ["35f9f0418df44c379e1e76fd9a0e6b6f"],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Brake%' ORDER BY date DESC LIMIT 1"
+  },
+  {
+    "id": "multi_013",
+    "route_type": "multi",
+    "query": "지금 차 속도 얼마인지 알려주고, 에코 모드로 바꿔줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "eco"},
+    "expected_answer": "현재 차량 속도는 0.0 km/h로, 정차 중입니다. 정차 상태를 확인했으니 요청하신 대로 주행 모드를 eco로 변경했습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT speed FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "multi_014",
+    "route_type": "multi",
+    "query": "타이어 로테이션 한 날짜 알려주고, 타이어 위치 교환은 왜 하고 언제 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "타이어 로테이션을 한 날짜는 2026-05-10입니다. 타이어 위치 교환은 편마모를 방지하기 위해 정기 점검 주기표에 따라 하며, 교환 시 비정상 마모나 손상을 함께 점검하고 일정 거리 주행 후 휠 너트 조임 상태를 점검하십시오. 편마모·쏠림·진동이 있으면 휠 얼라인먼트와 밸런스 점검을 받으세요.",
+    "relevant_chunk_ids": ["050117150dad4bc6b50a243a1bead348"],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Tire Rotation%'"
+  },
+  {
+    "id": "multi_015",
+    "route_type": "multi",
+    "query": "이미 해결된 진단 코드가 뭔지 보고, 에어백 경고등이 계속 켜져 있으면 문제가 있는 건지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "해결된 진단 코드는 U0100입니다. 에어백 경고등은 시동 'ON' 시 켜지지 않거나 3~6초 이후에도 계속 켜져 있거나 깜빡이거나 주행 중 켜지면 안전벨트 프리텐셔너 등 시스템 이상일 수 있으니 당사 직영 하이테크센터나 블루핸즈에서 신속하게 점검을 받으십시오.",
+    "relevant_chunk_ids": ["1ad0b4d60aa24173be260e9b0bdea838"],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE resolved = 1"
+  },
+  {
+    "id": "multi_016",
+    "route_type": "multi",
+    "query": "지금 RPM 얼마인지 알려주고, 전자식 변속 다이얼로 변속할 때 주의할 점도 알려줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "rpm"},
+    "expected_answer": "현재 RPM은 0입니다. 전자식 변속 다이얼로 변속할 때는 반드시 브레이크 페달을 밟은 상태에서 조작하십시오. 'D'·'R'·수동 변속 구간에서는 가속 페달을 밟지 않아도 차가 움직이므로 멈추려면 반드시 브레이크를 밟으세요.",
+    "relevant_chunk_ids": ["166db2aff1fd4871a94628a66be59250"],
+    "expected_sql": null
+  },
+  {
+    "id": "multi_017",
+    "route_type": "multi",
+    "query": "미해결 경고가 몇 개인지 알려주고, '사용자 인증 시스템을 점검하십시오' 경고문이 뜨면 뭘 해야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "미해결 진단 코드는 2개입니다. '사용자 인증 시스템을 점검하십시오' 경고문은 디지털 키 또는 지문 인증 시스템에 이상이 있을 때 표시되므로, 가까운 당사 직영 하이테크센터나 블루핸즈에서 점검을 받으십시오.",
+    "relevant_chunk_ids": ["1930a21aa9b14cd98fb63b453e9cb4b0"],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM dtc_codes WHERE resolved = 0"
+  },
+  {
+    "id": "multi_018",
+    "route_type": "multi",
+    "query": "가장 최근 운행 거리가 얼마였는지 알려주고, 겨울철 와셔액은 어떤 걸 써야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 최근 운행의 주행 거리는 15.0 km입니다. 겨울철에 여름용 와셔액을 사용하면 유리창 표면이 결빙될 수 있으므로 반드시 겨울용 와셔액을 보충해 사용하고, 바깥 공기 흡입구의 눈·얼음·젖은 오물을 제거하면 유리창 습기 발생을 줄일 수 있습니다.",
+    "relevant_chunk_ids": ["050896b267244f0aa216c9f25948fadc"],
+    "expected_sql": "SELECT distance FROM trip_history ORDER BY start_time DESC LIMIT 1"
+  },
+  {
+    "id": "multi_019",
+    "route_type": "multi",
+    "query": "정비를 총 몇 번 받았는지 알려주고, 배터리를 다룰 때 안전상 주의할 점도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "정비 이력은 총 3건입니다. 배터리 셀에는 인화성 높은 수소 가스가 있어 담뱃불·화염·불꽃을 멀리해야 하며, 불이 붙으면 폭발할 수 있습니다. 부식성 산이 있으니 어린이 손이 닿지 않게 하고, 전해액이 눈에 들어가면 15분 이상 깨끗한 물로 씻고 즉시 의료 조치를 받으세요. 작업 시 눈보호개를 착용하고 환기하십시오.",
+    "relevant_chunk_ids": ["284ea4f671c34c828ee7c9b2252c7ac2"],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM maintenance_log"
+  },
+  {
+    "id": "multi_020",
+    "route_type": "multi",
+    "query": "촉매 관련 진단 코드 있는지 확인하고, 배기가스를 줄이려면 어떻게 관리해야 하는지도 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "촉매 관련 진단 코드는 P0420입니다. 배기가스를 줄이려면 안내된 점검 사항을 철저히 이행하고, 배기가스 제어 장치 관련 정비는 임의로 하지 말고 하이테크센터나 블루핸즈에서 받으며, 연료가 전부 소모될 때까지 주행하지 말고 측정 전 약 15분간 시동을 걸어 정상 온도(80~95°C)로 맞추세요.",
+    "relevant_chunk_ids": ["0ea18444c77a431bb239b15c2e6f5756"],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE description LIKE '%Catalyst%'"
+  }
+]
