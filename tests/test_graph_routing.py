@@ -2,6 +2,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app.graph.builder as builder_module
+from app.a2a.dispatch import dispatch_task
+import app.a2a.dispatch as dispatch_module
 from app.graph.builder import run_graph
 
 
@@ -14,6 +16,26 @@ def clear_graph_cache():
     builder_module.build_graph.cache_clear()
     yield
     builder_module.build_graph.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def route_a2a_through_dispatch(monkeypatch):
+    """
+    A2AClient.send_task를 실제 HTTP 대신 in-process dispatch_task로 우회한다.
+
+    테스트 환경에는 knowledge/execution/perception 독립 서버(8002~8004)가
+    떠 있지 않으므로, 실제 HTTP 라운드트립 대신 dispatch_task를 직접 호출해
+    그래프 라우팅 + 각 노드의 실제 로직(아래 MCP/LLM mock으로 경계만 대체)을
+    계속 같은 방식으로 검증한다.
+    """
+    class _InProcessA2AClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def send_task(self, request):
+            return await dispatch_task(request)
+
+    monkeypatch.setattr("app.graph.a2a_nodes.A2AClient", _InProcessA2AClient)
 
 
 @pytest.fixture
@@ -143,7 +165,7 @@ async def test_observe_routes_to_end_on_retry_limit(patch_supervisor, monkeypatc
             "context_data": {**state.get("context_data", {})},
         }
 
-    monkeypatch.setattr(builder_module, "run_execution", failing_execution)
+    monkeypatch.setitem(dispatch_module._DISPATCH_TABLE, "execution", failing_execution)
     builder_module.build_graph.cache_clear()
 
     tracker = patch_supervisor([

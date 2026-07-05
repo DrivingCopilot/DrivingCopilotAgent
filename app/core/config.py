@@ -51,6 +51,21 @@ MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 # MCP tool 호출 타임아웃 (초)
 MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
 
+# A2A 태스크(POST /tasks/send) 타임아웃 (초).
+# knowledge/execution/perception 노드는 내부에서 LLM/VLM 추론을 거치므로
+# Agent Card 조회(GET, 5초 기본값)보다 훨씬 여유 있게 잡는다.
+A2A_TASK_TIMEOUT: float = float(os.getenv("A2A_TASK_TIMEOUT", "30.0"))
+
+# ---------------------------------------------------------------------------
+# Observe 노드 재시도 정책 (계획서: 타임아웃 2회, 파라미터 오류 2회, 잘못된 Tool 1회, SQL 오류 3회)
+# ---------------------------------------------------------------------------
+MAX_RETRY: Dict[str, int] = {
+    "timeout": 2,
+    "parameter": 2,
+    "invalid_tool": 1,
+    "sql": 3,
+}
+
 
 MIN_TEXT_LENGTH = 20   # 이 길이 미만 페이지는 노이즈로 제거 (VehiclePDFParser)
 
