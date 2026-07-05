@@ -28,7 +28,7 @@ WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (�
 
 # 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
 ENTITY_PROFILE_PATH = "./data/user_profile.json"
-EXTRACTOR_MODEL_NAME = "qwen2-vl-1.5b-instruct-int4"
+EXTRACTOR_MODEL_NAME = "qwen2.5:1.5b"
 
 # ---------------------------------------------------------------------------
 # Neo4j (Graph RAG)
