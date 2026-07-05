@@ -24,6 +24,9 @@ data/qdrant_storage/
 **/qdrant_storage/
 **/.lock
 
+# 런타임 데이터 (EntityMemory 사용자 선호도 프로필)
+data/user_profile.json
+
 # 개발자 개인 에디터 설정
 .vscode
 .antigravitycli
