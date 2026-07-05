@@ -55,6 +55,26 @@ HAZARD_KEYWORDS: Dict[str, List[str]] = {
     "warning_light": ["경고등", "warning"],
 }
 
+# reasoning 텍스트가 특정 sub-agent 위임을 언급하는지 감지하기 위한 힌트.
+# 7B 모델이 reasoning에서는 "execution agent가 처리해야 한다"고 결론 내리고도
+# next_agent 필드는 "__end__"로 내보내는 instruction-following 불일치를
+# 코드 레벨에서 바로잡는 데 쓴다 (perception 재호출 차단과 반대 방향의 보정).
+_AGENT_NAME_HINTS: Dict[str, List[str]] = {
+    "execution": ["execution agent", "delegate to 'execution'", "delegate to execution"],
+    "knowledge": ["knowledge agent", "delegate to 'knowledge'", "delegate to knowledge"],
+    "perception": ["perception agent", "delegate to 'perception'", "delegate to perception"],
+}
+
+
+def _infer_intended_agent(reasoning: str) -> str | None:
+    """reasoning에서 정확히 하나의 sub-agent만 언급됐을 때만 그 이름을 반환한다."""
+    lowered = reasoning.lower()
+    mentioned = [
+        agent for agent, hints in _AGENT_NAME_HINTS.items()
+        if any(hint in lowered for hint in hints)
+    ]
+    return mentioned[0] if len(mentioned) == 1 else None
+
 
 def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = "") -> str:
     """
@@ -117,7 +137,16 @@ You rely on Chain-of-Thought reasoning to make decisions.
 2. If the user's request requires understanding the physical environment (e.g. weather, road, obstacles, warning lights) AND 'Vision/Perception Results' below is EMPTY, delegate to 'perception'. Never delegate to 'perception' twice in a row — if it is already populated, you have your answer (see Rule 6).
 3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'.
    - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
-4. If the user requests an action or structured data retrieval, delegate to 'execution'.
+4. If the user requests an action or structured data retrieval, delegate to 'execution'. The "plan" MUST
+   name the EXACT MCP tool that literally matches the user's request, chosen from execution's MCP Tools
+   list above — never substitute an unrelated tool just because it appears in the list. If the user's
+   words map directly to a tool name (e.g. "wiper"/"와이퍼" -> control_wiper), use that tool. Do NOT default
+   to "trigger_emergency" or "set_driving_mode" unless the user explicitly asks for an emergency action or
+   a driving-mode change.
+   Examples:
+   - User: "와이퍼 켜줘" -> plan: ["control_wiper on=true"], next_agent: "execution"
+   - User: "에어컨 22도로 켜줘" -> plan: ["control_climate temperature=22 on=true"], next_agent: "execution"
+   - User: "긴급 상황이야 신고해줘" -> plan: ["trigger_emergency kind=call"], next_agent: "execution"
 5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
 6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'.
 7. If 'Vision/Perception Results' shows detected hazards (e.g. rain, tunnel, warning_light) AND 'Last Tool Call Result' shows a related action was already taken, explicitly mention BOTH the detected condition and the action taken in your summary — the action was triggered automatically by the Perception agent, not requested by the user.
@@ -126,6 +155,11 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
    - "plan": A list of step-by-step strings for the execution plan.
    - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
+10. "next_agent" MUST be consistent with your own "reasoning". If your reasoning concludes that a
+    specific sub-agent (knowledge/execution/perception) needs to act, "next_agent" MUST be that
+    agent's name — never output "__end__" while your reasoning says a sub-agent should handle the
+    request. Only output "__end__" when your reasoning concludes the request is already answered
+    or cannot be delegated further.
 
 [Error Recovery Protocol]
 When a 'Reflexion Feedback' indicates a tool failure, choose the recovery strategy based on the error_type:
@@ -168,7 +202,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     # 진짜 보장은 파싱 단계의 extract_first_json_object 가 한다 (아래 참고).
     llm = ChatOpenAI(
         model="qwen2-vl-7b-instruct-int4",
-        temperature=0.1,
+        temperature=0.0,
         max_tokens=300,
         frequency_penalty=1.2,
         presence_penalty=0.6,
@@ -262,7 +296,15 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
 
         parsed_result = json.loads(content)
 
-        new_plan = parsed_result.get("plan", [])
+        # 모델이 프롬프트(Rule 9: "plan"은 문자열 리스트)를 어기고 각 스텝을
+        # {"tool": ...} 같은 객체로 출력할 때가 있다 — 이를 그대로 WS "plan"
+        # 프레임에 실어 보내면 frontend PlanCard가 문자열을 기대하고 렌더링하다
+        # React 크래시("Objects are not valid as a React child")를 낸다.
+        raw_plan = parsed_result.get("plan", [])
+        new_plan = [
+            step if isinstance(step, str) else json.dumps(step, ensure_ascii=False)
+            for step in raw_plan
+        ]
         next_agent = parsed_result.get("next_agent", "__end__")
         reasoning = parsed_result.get("reasoning", "")
 
@@ -312,6 +354,27 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         )
         next_agent = "__end__"
         new_plan = []
+
+    # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
+    # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
+    # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면
+    # 무한루프 위험)라면 모델의 __end__ 판단을 신뢰하고 덮어쓰지 않는다.
+    _agent_has_fresh_result = {
+        "execution": bool(last_tool_call),
+        "knowledge": bool(vector_rag or graph_rag),
+        "perception": bool(vision_results),
+    }
+    if next_agent == "__end__":
+        inferred_agent = _infer_intended_agent(reasoning)
+        if inferred_agent and not _agent_has_fresh_result.get(inferred_agent, False):
+            logger.warning(
+                "supervisor_node: reasoning-next_agent 불일치 감지"
+                "(reasoning에 '%s' 위임 언급되었으나 next_agent=__end__) — '%s'로 강제 전환",
+                inferred_agent, inferred_agent,
+            )
+            next_agent = inferred_agent
+            if not new_plan:
+                new_plan = [f"delegate_to_{inferred_agent}"]
 
     # 사용자에게 보일 최종 답변(final_text)은 reasoning과 분리한다. vision_results
     # 가 있는 상태로 턴이 끝나면 — Rule 2 위반으로 강제 종료됐든 모델이 스스로
