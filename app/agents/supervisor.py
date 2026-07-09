@@ -201,7 +201,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     # JSON 모드 + 페널티는 모델이 반복하는 걸 "줄여줄" 뿐 보장하지는 않는다 —
     # 진짜 보장은 파싱 단계의 extract_first_json_object 가 한다 (아래 참고).
     llm = ChatOpenAI(
-        model="qwen2-vl-7b-instruct-int4",
+        model="qwen2.5vl:7b",
         temperature=0.0,
         max_tokens=300,
         frequency_penalty=1.2,

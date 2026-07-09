@@ -52,8 +52,7 @@ knowledge/execution/perception --MCP--> Backend mcp_server.py(9000)
 **Ollama 모델 준비** (Mac/Windows 공통 — Ollama 자체가 이미 설치·실행 중이어야 함)
 
 ```bash
-ollama pull qwen2-vl-7b-instruct-int4   # Supervisor 추론용
-ollama pull qwen2.5vl:7b                # Perception(Vision) 전용
+ollama pull qwen2.5vl:7b                # Supervisor/Execution(tool 추출)/Reflect/Perception(Vision)
 ollama pull qwen2.5:1.5b                # Knowledge/Text2SQL/선호도 추출 (텍스트 전용, 가벼움)
 ```
 
@@ -156,8 +155,11 @@ netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11434"
   `python mcp_server.py`를 REST API(8000)와 별개로 반드시 띄워야 합니다.
 - **`api_key` 관련 에러**: `.env`가 비어있거나, `.env`를 고친 뒤 서버를 재시작 안 한 경우입니다.
   값 수정 후에는 해당 프로세스를 반드시 재시작하세요.
-- **모델 404 (`model not found`)**: 위 Ollama 모델 3개(`qwen2-vl-7b-instruct-int4`,
-  `qwen2.5vl:7b`, `qwen2.5:1.5b`)가 다 pull됐는지 `ollama list`로 확인하세요.
+- **모델 404 (`model not found`)**: 위 Ollama 모델 2개(`qwen2.5vl:7b`, `qwen2.5:1.5b`)가
+  다 pull됐는지 `ollama list`로 확인하세요. `qwen2-vl-7b-instruct-int4` 같은 이름은
+  Ollama 공식 라이브러리에 없으므로 `ollama pull`로 받을 수 없습니다(로컬에서
+  `ollama cp`로 별칭을 만든 게 아니라면) — 코드도 전부 `qwen2.5vl:7b`를 직접 쓰도록
+  맞춰뒀습니다.
 - **첫 질문에서 몇십 초씩 멈춤**: 첫 실행 시 `BAAI/bge-m3` 임베딩 모델(2GB+)을
   HuggingFace에서 내려받습니다. 프로세스당 한 번만 겪는 정상 동작이고, 이후엔
   캐시(`~/.cache/huggingface`)에서 바로 로드됩니다.
