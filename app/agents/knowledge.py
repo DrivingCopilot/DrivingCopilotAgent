@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import Any, Dict, List
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -82,8 +83,11 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         
     instruction_msg = HumanMessage(content=f"[Supervisor Instruction] {instruction_text}")
     
-    # 2. Setup LLM & Tools (G1: Executor uses Qwen2-VL 1.5B)
-    llm = ChatOpenAI(model="qwen2-vl-1.5b-instruct-int4", temperature=0.1)
+    # 2. Setup LLM & Tools (G1: Executor uses Qwen2.5 1.5B)
+    # KNOWLEDGE_MODEL 로 오버라이드 가능 — 1.5B는 tool calling 미지원이라
+    # 평가/운영 시 tool-capable 모델(예: qwen3-vl:4b-instruct)로 교체할 수 있다.
+    knowledge_model = os.getenv("KNOWLEDGE_MODEL", "qwen2.5:1.5b")
+    llm = ChatOpenAI(model=knowledge_model, temperature=0.1)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
     
     agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
