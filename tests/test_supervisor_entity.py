@@ -2,13 +2,22 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
-from app.agents.supervisor import supervisor_node
+from app.agents.supervisor import SupervisorDecision, supervisor_node
 
 
-async def _stream_json(content: str):
-    yield MagicMock(content=content)
+def _mock_structured_llm(payload: dict) -> MagicMock:
+    """with_structured_output(...).ainvoke() 가 payload로 만든 SupervisorDecision을
+    {"parsed": ..., "parsing_error": None}으로 반환하는 ChatOllama 인스턴스 Mock."""
+    parsed = SupervisorDecision(**payload)
+    mock_structured = MagicMock()
+    mock_structured.ainvoke = AsyncMock(
+        return_value={"raw": AIMessage(content=str(payload)), "parsed": parsed, "parsing_error": None}
+    )
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output = MagicMock(return_value=mock_structured)
+    return mock_llm
 
 
 def _base_state(context_data: dict | None = None) -> dict:
@@ -31,17 +40,14 @@ async def test_profile_injected_in_context():
     mock_em = MagicMock()
     mock_em.load.return_value = profile
 
-    mock_llm = MagicMock()
-    mock_llm.astream = MagicMock(
-        return_value=_stream_json('{"reasoning":"ok","plan":[],"next_agent":"__end__"}')
-    )
+    mock_llm = _mock_structured_llm({"reasoning": "ok", "plan": [], "next_agent": "__end__"})
 
-    with patch("app.agents.supervisor.ChatOpenAI", return_value=mock_llm), \
+    with patch("app.agents.supervisor.ChatOllama", return_value=mock_llm), \
          patch("app.agents.supervisor._get_entity_memory", return_value=mock_em), \
          patch("app.agents.supervisor._ws.websocket_manager.send_status", new=AsyncMock()):
         await supervisor_node(_base_state())
 
-    messages_sent = mock_llm.astream.call_args[0][0]
+    messages_sent = mock_llm.with_structured_output.return_value.ainvoke.call_args[0][0]
     eval_prompt = messages_sent[-1].content
     assert "preferred_temp" in eval_prompt
 
@@ -52,16 +58,13 @@ async def test_empty_profile_injected_in_context():
     mock_em = MagicMock()
     mock_em.load.return_value = {}
 
-    mock_llm = MagicMock()
-    mock_llm.astream = MagicMock(
-        return_value=_stream_json('{"reasoning":"ok","plan":[],"next_agent":"__end__"}')
-    )
+    mock_llm = _mock_structured_llm({"reasoning": "ok", "plan": [], "next_agent": "__end__"})
 
-    with patch("app.agents.supervisor.ChatOpenAI", return_value=mock_llm), \
+    with patch("app.agents.supervisor.ChatOllama", return_value=mock_llm), \
          patch("app.agents.supervisor._get_entity_memory", return_value=mock_em), \
          patch("app.agents.supervisor._ws.websocket_manager.send_status", new=AsyncMock()):
         await supervisor_node(_base_state())
 
-    messages_sent = mock_llm.astream.call_args[0][0]
+    messages_sent = mock_llm.with_structured_output.return_value.ainvoke.call_args[0][0]
     eval_prompt = messages_sent[-1].content
     assert "User Profile (preferences): {}" in eval_prompt

@@ -56,6 +56,11 @@ MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
 # Agent Card 조회(GET, 5초 기본값)보다 훨씬 여유 있게 잡는다.
 A2A_TASK_TIMEOUT: float = float(os.getenv("A2A_TASK_TIMEOUT", "30.0"))
 
+# Ollama 네이티브 API 엔드포인트 (supervisor의 구조화 출력용 ChatOllama가 사용).
+# OPENAI_BASE_URL(ChatOpenAI 계열이 쓰는 OpenAI 호환 경로, .../v1)과는 별개 설정 —
+# 같은 서버를 가리켜도 문자열 슬라이싱으로 파생시키지 않는다.
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
 # ---------------------------------------------------------------------------
 # Observe 노드 재시도 정책 (계획서: 타임아웃 2회, 파라미터 오류 2회, 잘못된 Tool 1회, SQL 오류 3회)
 # ---------------------------------------------------------------------------

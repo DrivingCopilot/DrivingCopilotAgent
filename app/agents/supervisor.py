@@ -9,15 +9,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
-from app.core.config import AGENT_PORT
-from app.core.json_utils import extract_first_json_object
+from app.core.config import AGENT_PORT, OLLAMA_BASE_URL
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
@@ -64,6 +64,22 @@ _AGENT_NAME_HINTS: Dict[str, List[str]] = {
     "knowledge": ["knowledge agent", "delegate to 'knowledge'", "delegate to knowledge"],
     "perception": ["perception agent", "delegate to 'perception'", "delegate to perception"],
 }
+
+
+class SupervisorDecision(BaseModel):
+    """
+    next_agent는 app/graph/builder.py의 StateGraph 노드/엣지 토폴로지에 고정된 값이다.
+    app/a2a/registry.py의 Agent Card 목록(4개, "supervisor" 포함)과는 의도적으로
+    다르다 — "supervisor"를 LLM이 next_agent로 직접 선택하게 허용하면 안 되고(자기
+    루프는 JSON 파싱 실패 시에만 코드가 넣는 값), builder.py에 새 노드를 추가하지
+    않는 한 이 목록을 동적으로 바꿔도 route_next가 받아주지 않는다.
+    """
+
+    reasoning: str = Field(..., description="Brief chain-of-thought explanation of the decision.")
+    plan: List[str] = Field(..., description="Step-by-step execution plan as strings.")
+    next_agent: Literal["knowledge", "execution", "perception", "__end__"] = Field(
+        ..., description="Exactly one of the available sub-agent names, or '__end__' if the task is complete."
+    )
 
 
 def _infer_intended_agent(reasoning: str) -> str | None:
@@ -198,16 +214,17 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         route_type, current_next_agent, plan, error_count,
     )
 
-    # JSON 모드 + 페널티는 모델이 반복하는 걸 "줄여줄" 뿐 보장하지는 않는다 —
-    # 진짜 보장은 파싱 단계의 extract_first_json_object 가 한다 (아래 참고).
-    llm = ChatOpenAI(
+    # Ollama 네이티브 grammar-constrained decoding으로 JSON 스키마를 강제한다 —
+    # next_agent는 반드시 유효한 4개 값 중 하나, plan은 반드시 문자열 배열로만
+    # 나오게 되어(SupervisorDecision), 깨진 JSON이나 스키마 이탈 자체가 구조적으로
+    # 불가능해진다. 단, "그 값이 사용자 의도와 의미적으로 맞는가"는 스키마가
+    # 보장 못 하므로 아래 _infer_intended_agent 등 기존 안전장치는 그대로 둔다.
+    structured_llm = ChatOllama(
         model="qwen2.5vl:7b",
         temperature=0.0,
-        max_tokens=300,
-        frequency_penalty=1.2,
-        presence_penalty=0.6,
-        model_kwargs={"response_format": {"type": "json_object"}},
-    )
+        num_predict=300,
+        base_url=OLLAMA_BASE_URL,
+    ).with_structured_output(SupervisorDecision, method="json_schema", include_raw=True)
 
     # 첫 진입 시에만 experience 검색 (캐시 분기: run_graph 한 번에 재사용)
     if "retrieved_experience" not in context_data:
@@ -275,72 +292,47 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     messages_to_send.append(HumanMessage(content=eval_prompt))
 
     try:
-        content = ""
-        # 모델 출력은 reasoning/plan/next_agent 를 담은 구조화 JSON 한 덩어리이므로,
-        # 토큰 단위로 그대로 WS에 흘려보내면 frontend(type:"text")가 그걸 최종 자연어
-        # 답변으로 오인해 깨진 JSON을 채팅창에 그대로 노출한다. 따라서 전체를 모아
-        # 파싱한 뒤, frontend AG-UI 프로토콜에 맞춰 reasoning/plan/text 프레임을
-        # 각각 따로 보낸다 (아래 참고).
-        async for chunk in llm.astream(messages_to_send):
-            if chunk.content:
-                content += chunk.content
+        llm_result = await structured_llm.ainvoke(messages_to_send)
+    except Exception as e:
+        logger.error(f"supervisor_node 완료 (LLM 호출 예외): {e}")
+        await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error"}))
+        return {"next_agent": "__end__"}
 
-        content = content.strip()
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].strip()
-
-        # 모델이 같은/다른 JSON 객체를 반복해서 이어붙여도 첫 블록만 사용한다.
-        content = extract_first_json_object(content)
-
-        parsed_result = json.loads(content)
-
-        # 모델이 프롬프트(Rule 9: "plan"은 문자열 리스트)를 어기고 각 스텝을
-        # {"tool": ...} 같은 객체로 출력할 때가 있다 — 이를 그대로 WS "plan"
-        # 프레임에 실어 보내면 frontend PlanCard가 문자열을 기대하고 렌더링하다
-        # React 크래시("Objects are not valid as a React child")를 낸다.
-        raw_plan = parsed_result.get("plan", [])
-        new_plan = [
-            step if isinstance(step, str) else json.dumps(step, ensure_ascii=False)
-            for step in raw_plan
-        ]
-        next_agent = parsed_result.get("next_agent", "__end__")
-        reasoning = parsed_result.get("reasoning", "")
-
-        logger.info(f"Supervisor Reasoning: {reasoning}")
-
-    except json.JSONDecodeError as e:
-        logger.error(f"supervisor_node 완료 (JSON 파싱 실패): {e}. Raw content: {content}")
+    parsing_error = llm_result.get("parsing_error")
+    if parsing_error is not None:
+        logger.error(f"supervisor_node 완료 (구조화 출력 파싱 실패): {parsing_error}")
         updated_error_count = dict(error_count)
         updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
         count = updated_error_count["parameter"]
         limit = MAX_RETRY.get("parameter", 2)
 
         if count >= limit:
-            logger.error(f"Supervisor JSON parse retry limit exceeded: {count}/{limit}")
+            logger.error(f"Supervisor 구조화 출력 파싱 retry limit exceeded: {count}/{limit}")
             user_msg = (
-                f"JSON 생성에 {count}회 실패했습니다. 요청을 처리할 수 없습니다."
+                f"응답 생성에 {count}회 실패했습니다. 요청을 처리할 수 없습니다."
             )
             await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": user_msg}))
             await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "parse_error_limit"}))
             return {
                 "error_count": updated_error_count,
-                "feedback": f"Supervisor JSON parse failed {count}/{limit} times. Stopping.",
+                "feedback": f"Supervisor structured output parsing failed {count}/{limit} times. Stopping.",
                 "next_agent": "__end__",
                 "messages": [AIMessage(content=user_msg)]
             }
 
-        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"JSON 생성 재시도 중... ({count}/{limit})"}))
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"응답 생성 재시도 중... ({count}/{limit})"}))
         return {
             "error_count": updated_error_count,
-            "feedback": f"Failed to parse response as valid JSON (attempt {count}/{limit}). Error: {str(e)}",
+            "feedback": f"Structured output parsing failed (attempt {count}/{limit}). Error: {parsing_error}",
             "next_agent": "supervisor"
         }
-    except Exception as e:
-        logger.error(f"supervisor_node 완료 (LLM 호출 예외): {e}")
-        await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error"}))
-        return {"next_agent": "__end__"}
+
+    parsed: SupervisorDecision = llm_result["parsed"]
+    new_plan = parsed.plan
+    next_agent = parsed.next_agent
+    reasoning = parsed.reasoning
+
+    logger.info(f"Supervisor Reasoning: {reasoning}")
 
     # 안전장치: vision_results 가 이미 채워져 있는데도 LLM 이 시스템 프롬프트 Rule 2
     # ("Never delegate to 'perception' twice in a row")를 어기고 perception 을 다시
