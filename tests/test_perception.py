@@ -255,3 +255,22 @@ class TestPerceptionNode:
         assert "tool_start" in types
         assert "tool_result" in types
         assert "status" in types
+
+
+class TestSanityCheckHazards:
+    """description과 hazards가 모순될 때 _sanity_check_hazards가 걸러내는지 검증."""
+
+    def test_removes_rain_when_description_says_clear(self):
+        from app.agents.perception import _sanity_check_hazards
+
+        assert _sanity_check_hazards("맑고 화창합니다.", ["rain"]) == []
+
+    def test_keeps_rain_when_description_is_consistent(self):
+        from app.agents.perception import _sanity_check_hazards
+
+        assert _sanity_check_hazards("비가 내리고 있습니다.", ["rain"]) == ["rain"]
+
+    def test_keeps_other_hazards_untouched(self):
+        from app.agents.perception import _sanity_check_hazards
+
+        assert _sanity_check_hazards("맑고 화창합니다.", ["tunnel"]) == ["tunnel"]

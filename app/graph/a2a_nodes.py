@@ -43,10 +43,45 @@ async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any
     await _ws.websocket_manager.send_status(
         json.dumps({"type": "tool_start", "data": {"tool_name": agent_name, "params": {}}})
     )
-    response = await A2AClient(base_url=card.url, timeout=A2A_TASK_TIMEOUT).send_task(request)
+
+    # tool_start를 보낸 이상 tool_result는 반드시 한 번 나가야 한다 — 프론트
+    # ToolCallCard가 tool_result 미수신 시 "실행 중…" 상태로 영구 고착되기
+    # 때문에, send_task 자체는 예외를 던지지 않도록 설계돼 있어도(A2AClient
+    # 참고) A2AClient 생성 등 그 전후 어디서든 예기치 못한 예외가 나면
+    # except에서 잡아 최소한의 에러 tool_result를 대신 내보낸다.
+    response = None
+    try:
+        response = await A2AClient(base_url=card.url, timeout=A2A_TASK_TIMEOUT).send_task(request)
+    except Exception as exc:
+        logger.error("A2A %s 호출 중 미포착 예외: %s", agent_name, exc)
+
+    if response is not None:
+        # response.result는 다음 노드로 넘길 partial-state dict(tool_calls/
+        # context_data/messages 등)라 사람이 읽을 요약이 아니다 — WS로는
+        # 상태만 알리는 고정 문구로 충분하다(과설계 방지).
+        tool_result_data = {
+            "tool_name": agent_name,
+            "status": response.status,
+            "result": (response.error or "실패") if response.status == "error" else "완료",
+        }
+    else:
+        tool_result_data = {"tool_name": agent_name, "status": "error", "result": "A2A 호출 중 예외 발생"}
     await _ws.websocket_manager.send_status(
-        json.dumps({"type": "tool_result", "data": {"tool_name": agent_name, "status": response.status}})
+        json.dumps({"type": "tool_result", "data": tool_result_data})
     )
+
+    if response is None:
+        return {
+            "plan": [],
+            "tool_calls": [{
+                "tool": agent_name,
+                "params": {},
+                "result": "A2A 호출 중 예외 발생",
+                "status": "error",
+                "error_type": "parameter",
+                "error_msg": "A2A 호출 중 예외 발생",
+            }]
+        }
 
     if response.status == "error":
         # A2A 통신 자체가 실패한 경우(타임아웃/연결 실패/미포착 예외) — sub-agent
