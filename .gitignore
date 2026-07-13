@@ -27,6 +27,9 @@ data/qdrant_storage/
 # 런타임 데이터 (EntityMemory 사용자 선호도 프로필)
 data/user_profile.json
 
+# 평가 실행 리포트 (Knowledge 에이전트 evaluation 산출물)
+evaluation/reports/
+
 # 개발자 개인 에디터 설정
 .vscode
 .antigravitycli
@@ -39,3 +42,5 @@ Intern_Project_Plan.md
 # 로컬 참고 문서 및 Claude Code 개인 설정
 docs/
 CLAUDE.md
+
+
