@@ -1,38 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Virtual environments
 .venv/
 venv/
 ENV/
 
-
-__pycache__/
-*.py[cod]
-*$py.class
-
-
+# 환경변수 / IDE
 .env
 .idea/
+.vscode
+.antigravitycli
 
-
+# Logs
 *.log
-data/raw/           # Python
-__pycache__/
-*.pyc
-*.pyo
-
 
 # 런타임 데이터 (Qdrant 로컬 저장소)
+data/raw/
 data/qdrant_storage/
 **/qdrant_storage/
 **/.lock
 
-# 개발자 개인 에디터 설정
-.vscode
-.antigravitycli
+# 런타임 데이터 (EntityMemory 사용자 선호도 프로필)
+data/user_profile.json
 
+# 평가 산출물 (gold-set 러너 리포트)
+evaluation/reports/
+
+# 로컬 참고 문서 및 개인 설정
 gemini.md
 Driving_Copilot_Plan.md
 Intern_Project_Plan.md
 .Driving_Copilot_Plan.md
 .Intern_Project_Plan.md
-# 로컬 참고 문서 및 Claude Code 개인 설정
 docs/
 CLAUDE.md
