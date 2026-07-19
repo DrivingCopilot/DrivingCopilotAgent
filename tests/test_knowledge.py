@@ -218,6 +218,64 @@ async def test_vector_rag_delegates_to_mcp():
     assert result == "매뉴얼 검색 결과입니다."
 
 
+# ---------------------------------------------------------------------------
+# 시나리오 7: CRAG 연동 (crag_query 기록 / 재검색 / 실패 시 상태 초기화)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_knowledge_node_records_crag_query_for_grader():
+    # 멀티스텝 plan 에서 완료 스텝을 pop 하더라도, grade/transform 이 평가할
+    # 쿼리(crag_query)에는 '실제 실행된 스텝'이 기록되어야 한다.
+    fake = FakeReactAgent(answer="결과")
+    state = {
+        "messages": [HumanMessage(content="원본 질문")],
+        "plan": ["스텝A", "스텝B"],
+        "context_data": {},
+        "error_count": {},
+    }
+    with _patch_agent(fake):
+        result = await knowledge_node(state)
+
+    assert result["context_data"]["crag_query"] == "스텝A"  # 실행된 스텝 기록
+    assert result["plan"] == ["스텝B"]                       # 완료 스텝 pop
+
+
+@pytest.mark.asyncio
+async def test_knowledge_node_reretrieval_uses_refined_query_keeps_plan():
+    fake = FakeReactAgent(answer="재검색 결과")
+    state = {
+        "messages": [HumanMessage(content="원본")],
+        "plan": ["스텝A"],
+        "context_data": {"refined_query": "재작성된 쿼리", "crag_query": "스텝A", "crag_attempts": 1},
+        "error_count": {},
+    }
+    with _patch_agent(fake):
+        result = await knowledge_node(state)
+
+    # 재검색 지시문에 refined_query 사용
+    assert "재작성된 쿼리" in fake.received["messages"][-1].content
+    # plan 재-pop 안 함, refined_query 소비, crag_query 원본 유지
+    assert result["plan"] == ["스텝A"]
+    assert result["context_data"]["refined_query"] == ""
+    assert result["context_data"]["crag_query"] == "스텝A"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_node_exception_clears_refined_query():
+    # 재검색 중 실패해도 refined_query 를 초기화해 다음 위임으로 새지 않게 한다.
+    fake = FakeReactAgent(raise_exc=RuntimeError("boom"))
+    state = {
+        "messages": [HumanMessage(content="질문")],
+        "plan": ["스텝"],
+        "context_data": {"refined_query": "재작성"},
+        "error_count": {},
+    }
+    with _patch_agent(fake):
+        result = await knowledge_node(state)
+
+    assert result["context_data"]["refined_query"] == ""
+
+
 @pytest.mark.asyncio
 async def test_graph_rag_forwards_entities():
     mock_call = AsyncMock(return_value=("관계 정보", "success", "", ""))

@@ -8,13 +8,18 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
 흐름:
     START → supervisor → [knowledge | execution | perception | supervisor | finalize(__end__)]
                                   ↓           ↓            ↓
-              ┌── observe ←───────┴───────────┘            │
-              │       ↓                hazard 감지 → execution 직행 → observe
-              │   reflect              hazard 없음 → observe
-              │       ↓                (route_after_perception)
+              ┌── observe ←───────┼───────────┘            │
+              │       ↓           │  hazard 감지 → execution 직행 → observe
+              │   reflect         │  hazard 없음 → observe
+              │       ↓           │  (route_after_perception)
               └─[supervisor | finalize(__end__)]
                         ↓
                     finalize → END
+
+    CRAG(Corrective RAG) 서브그래프 — knowledge 결과 교정 루프:
+    knowledge → grade_retrieval →
+        correct / 재검색 캡 소진 → refine_knowledge → observe
+        incorrect | ambiguous    → transform_query  → knowledge (재검색, MAX_CRAG_ATTEMPTS 캡)
 """
 
 from __future__ import annotations
@@ -32,6 +37,12 @@ from app.agents.finalize import finalize_node
 from app.agents.perception import perception_node
 from app.agents.knowledge import knowledge_node
 from app.agents.execution import run_execution
+from app.agents.crag import (
+    grade_retrieval_node,
+    transform_query_node,
+    refine_knowledge_node,
+    route_after_grade,
+)
 from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -113,6 +124,10 @@ def build_graph():
     graph.add_node("observe", observe_node)
     graph.add_node("reflect", reflect_node)
     graph.add_node("finalize", finalize_node)
+    # CRAG(Corrective RAG) 노드
+    graph.add_node("grade_retrieval", grade_retrieval_node)
+    graph.add_node("transform_query", transform_query_node)
+    graph.add_node("refine_knowledge", refine_knowledge_node)
 
     # 2. 시작 엣지
     # TODO: Query Router 구현 후 START → query_router → supervisor 로 교체
@@ -131,9 +146,24 @@ def build_graph():
         },
     )
 
-    # 4. knowledge/execution → observe (실행 결과 검증)
-    graph.add_edge("knowledge", "observe")
+    # 4. execution → observe (실행 결과 검증)
     graph.add_edge("execution", "observe")
+
+    # 4-0. knowledge → CRAG 교정 루프 → observe
+    #   knowledge 검색 결과를 grade_retrieval 이 평가하고,
+    #   부실하면 transform_query 로 쿼리를 재작성해 knowledge 로 재검색시킨다.
+    #   충분(correct)하거나 재검색 캡 소진 시 refine_knowledge 로 정제 후 observe 합류.
+    graph.add_edge("knowledge", "grade_retrieval")
+    graph.add_conditional_edges(
+        "grade_retrieval",
+        route_after_grade,
+        {
+            "refine": "refine_knowledge",
+            "transform": "transform_query",
+        },
+    )
+    graph.add_edge("transform_query", "knowledge")   # 재검색 루프
+    graph.add_edge("refine_knowledge", "observe")    # 기존 검증 흐름 합류
 
     # 4-1. perception → 멀티모달 트리거 분기
     #   hazard 감지(plan 있음) → execution 직행, 없으면 observe로 합류
@@ -197,8 +227,11 @@ async def run_graph(user_message: str, route_type: str = "") -> AgentState:
     }
 
     logger.info("run_graph 시작: %r | route_type=%r", user_message, route_type)
-    # recursion_limit: 무한 루프 안전망 (ReAct 루프 + observe + reflect 고려)
-    result = await app.ainvoke(initial_state, config={"recursion_limit": 25})
+    # recursion_limit: 무한 루프 안전망.
+    # supervisor 루프 + observe + reflect 에 더해, CRAG 는 knowledge 위임 1회당
+    # grade_retrieval→(transform_query→knowledge→grade_retrieval)→refine 노드를
+    # 추가하므로(위임당 최대 ~6 노드) 여유를 둔다.
+    result = await app.ainvoke(initial_state, config={"recursion_limit": 40})
     logger.info("run_graph 완료")
 
     return result

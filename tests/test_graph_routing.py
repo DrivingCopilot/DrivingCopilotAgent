@@ -72,7 +72,29 @@ async def test_react_one_loop_execution(patch_supervisor):
 
 
 @pytest.mark.asyncio
-async def test_react_one_loop_knowledge(patch_supervisor):
+async def test_react_one_loop_knowledge(patch_supervisor, monkeypatch):
+    # knowledge 는 LLM/MCP(ReAct) 경계를 갖고, 이어 CRAG 서브그래프
+    # (grade_retrieval → refine_knowledge → observe)를 거친다. 라우팅만 검증하므로
+    # knowledge/CRAG 노드는 결정적 stub 으로 대체한다.
+    async def fake_knowledge(state):
+        return {
+            "context_data": {"last_knowledge_result": "매뉴얼 검색 결과"},
+            "plan": [],
+            "next_agent": "supervisor",
+        }
+
+    async def fake_grade(state):
+        # correct → route_after_grade 가 refine 으로 보낸다 (재검색 없음)
+        return {"context_data": {"crag_grade": {"grade": "correct", "score": 1.0}}}
+
+    async def fake_refine(state):
+        return {"context_data": {}}
+
+    monkeypatch.setattr(builder_module, "knowledge_node", fake_knowledge)
+    monkeypatch.setattr(builder_module, "grade_retrieval_node", fake_grade)
+    monkeypatch.setattr(builder_module, "refine_knowledge_node", fake_refine)
+    builder_module.build_graph.cache_clear()
+
     tracker = patch_supervisor([
         {"next_agent": "knowledge", "plan": ["s1"], "feedback": ""},
         {"next_agent": "__end__", "plan": [], "feedback": ""},
@@ -81,8 +103,52 @@ async def test_react_one_loop_knowledge(patch_supervisor):
     result = await run_graph("매뉴얼 검색해줘")
 
     assert tracker["count"] == 2
-    assert "vector_results" in result["context_data"]
-    assert "graph_results" in result["context_data"]
+    # knowledge → grade_retrieval(correct) → refine_knowledge → observe → supervisor → end
+    assert result["context_data"]["last_knowledge_result"] == "매뉴얼 검색 결과"
+
+
+@pytest.mark.asyncio
+async def test_crag_reretrieval_loop(patch_supervisor, monkeypatch):
+    # grade 가 incorrect 를 반환하면 transform_query → knowledge 로 재검색하고,
+    # crag_attempts 가 MAX_CRAG_ATTEMPTS(1) 에 도달하면 refine 으로 빠져 종료한다.
+    from app.agents.crag import MAX_CRAG_ATTEMPTS
+
+    knowledge_calls = {"count": 0}
+
+    async def fake_knowledge(state):
+        knowledge_calls["count"] += 1
+        return {
+            "context_data": {"last_knowledge_result": f"결과 {knowledge_calls['count']}"},
+            "next_agent": "supervisor",
+        }
+
+    async def fake_grade(state):
+        return {"context_data": {"crag_grade": {"grade": "incorrect", "score": 0.0}}}
+
+    async def fake_transform(state):
+        cd = state.get("context_data", {})
+        attempts = int(cd.get("crag_attempts", 0)) + 1
+        return {"context_data": {"refined_query": "재작성된 쿼리", "crag_attempts": attempts}}
+
+    async def fake_refine(state):
+        return {"context_data": {}}
+
+    monkeypatch.setattr(builder_module, "knowledge_node", fake_knowledge)
+    monkeypatch.setattr(builder_module, "grade_retrieval_node", fake_grade)
+    monkeypatch.setattr(builder_module, "transform_query_node", fake_transform)
+    monkeypatch.setattr(builder_module, "refine_knowledge_node", fake_refine)
+    builder_module.build_graph.cache_clear()
+
+    tracker = patch_supervisor([
+        {"next_agent": "knowledge", "plan": ["s1"], "feedback": ""},
+        {"next_agent": "__end__", "plan": [], "feedback": ""},
+    ])
+
+    result = await run_graph("애매한 질문")
+
+    # 최초 검색 1회 + 재검색 1회 = knowledge 2회 (MAX_CRAG_ATTEMPTS=1 캡)
+    assert knowledge_calls["count"] == MAX_CRAG_ATTEMPTS + 1
+    assert tracker["count"] == 2
 
 
 @pytest.mark.asyncio

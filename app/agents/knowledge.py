@@ -73,14 +73,22 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     
     messages = state.get("messages", [])
     plan = state.get("plan", [])
-    
+    context_data = state.get("context_data", {})
+
+    # CRAG 재검색 여부: transform_query_node 가 채운 refined_query 가 있으면
+    # 동일 plan 스텝을 재작성된 쿼리로 재검색하는 중이다.
+    refined_query = context_data.get("refined_query", "")
+    is_reretrieval = bool(refined_query)
+
     # 1. Prepare Instructions based on Plan-and-Execute pattern
     instruction_text = ""
-    if plan and len(plan) > 0:
+    if is_reretrieval:
+        instruction_text = refined_query
+    elif plan and len(plan) > 0:
         instruction_text = f"Execute the next step in the plan: {plan[0]}"
     else:
         instruction_text = "Answer the user's latest query based on your domain knowledge tools."
-        
+
     instruction_msg = HumanMessage(content=f"[Supervisor Instruction] {instruction_text}")
     
     # 2. Setup LLM & Tools (G1: Executor uses Qwen2.5 1.5B)
@@ -105,11 +113,25 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         final_answer = new_messages[-1].content if new_messages else "Knowledge retrieval completed."
         
         # Context data update (accumulate findings)
-        context_data = state.get("context_data", {})
         context_data["last_knowledge_result"] = final_answer
-        
-        # Pop the completed plan step
-        new_plan = plan[1:] if plan else []
+        # refined_query 는 이번 재검색으로 소비됐으므로 초기화(빈 문자열=없음).
+        context_data["refined_query"] = ""
+
+        if is_reretrieval:
+            # CRAG 재검색: 동일 스텝을 다시 검색한 것이므로 plan 을 재-pop 하지 않고,
+            # grade/transform 의 평가 기준(crag_query)도 원본 스텝 그대로 유지한다.
+            new_plan = plan
+        else:
+            # 신규 스텝 실행: 완료 스텝 pop + CRAG 재검색 예산 리셋.
+            # grade_retrieval/transform_query 가 "실제로 실행된 쿼리"를 평가하도록
+            # crag_query 를 기록한다 — pop 이후 plan[0] 이 다음 스텝으로 바뀌어
+            # grader 가 엉뚱한 스텝을 평가하는 문제를 막는다.
+            user_query = next(
+                (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+            )
+            context_data["crag_query"] = plan[0] if plan else user_query
+            new_plan = plan[1:] if plan else []
+            context_data["crag_attempts"] = 0
         
         await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge retrieval complete. Returning to Supervisor."}))
         
@@ -130,6 +152,10 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         
         return {
             "messages": [AIMessage(content=f"Knowledge Agent encountered an error: {e}")],
+            # 재검색 중 실패해도 refined_query 를 반드시 초기화한다 — 남겨두면 다음
+            # knowledge 위임이 낡은 refined_query 를 재검색으로 오인해 엉뚱한
+            # instruction 을 쓰고 plan 스텝 pop 을 건너뛴다.
+            "context_data": {"refined_query": ""},
             "next_agent": "supervisor",
             "error_count": error_count,
             "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}"
