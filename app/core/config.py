@@ -51,6 +51,17 @@ MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 # MCP tool 호출 타임아웃 (초)
 MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
 
+# ---------------------------------------------------------------------------
+# 재시도 한도 (ReAct Observe/Reflect · error_type별 최대 재시도 횟수)
+# ---------------------------------------------------------------------------
+
+MAX_RETRY: Dict[str, int] = {
+    "timeout": 2,
+    "parameter": 2,
+    "invalid_tool": 1,
+    "sql": 3,
+}
+
 
 MIN_TEXT_LENGTH = 20   # 이 길이 미만 페이지는 노이즈로 제거 (VehiclePDFParser)
 
