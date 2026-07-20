@@ -42,6 +42,10 @@ from app.agents.crag import (
     transform_query_node,
     refine_knowledge_node,
     route_after_grade,
+from app.graph.a2a_nodes import (
+    execution_a2a_node,
+    knowledge_a2a_node,
+    perception_a2a_node,
 )
 from app.graph.state import AgentState
 
@@ -118,9 +122,9 @@ def build_graph():
 
     # 1. 노드 등록
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node("knowledge", knowledge_node)
-    graph.add_node("execution", run_execution)
-    graph.add_node("perception", perception_node)
+    graph.add_node("knowledge", knowledge_a2a_node)
+    graph.add_node("execution", execution_a2a_node)
+    graph.add_node("perception", perception_a2a_node)
     graph.add_node("observe", observe_node)
     graph.add_node("reflect", reflect_node)
     graph.add_node("finalize", finalize_node)

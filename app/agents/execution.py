@@ -97,7 +97,7 @@ def _get_extraction_llm() -> ChatOpenAI:
     """_EXTRACTION_LLM 싱글턴을 반환한다. 최초 호출 시 생성된다."""
     global _EXTRACTION_LLM
     if _EXTRACTION_LLM is None:
-        _EXTRACTION_LLM = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.0)
+        _EXTRACTION_LLM = ChatOpenAI(model="qwen2.5vl:7b", temperature=0.0)
     return _EXTRACTION_LLM
 
 

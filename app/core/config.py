@@ -28,7 +28,7 @@ WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (�
 
 # 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
 ENTITY_PROFILE_PATH = "./data/user_profile.json"
-EXTRACTOR_MODEL_NAME = "qwen2-vl-1.5b-instruct-int4"
+EXTRACTOR_MODEL_NAME = "qwen2.5:1.5b"
 
 # ---------------------------------------------------------------------------
 # Neo4j (Graph RAG)
@@ -51,10 +51,19 @@ MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 # MCP tool 호출 타임아웃 (초)
 MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
 
-# ---------------------------------------------------------------------------
-# 재시도 한도 (ReAct Observe/Reflect · error_type별 최대 재시도 횟수)
-# ---------------------------------------------------------------------------
+# A2A 태스크(POST /tasks/send) 타임아웃 (초).
+# knowledge/execution/perception 노드는 내부에서 LLM/VLM 추론을 거치므로
+# Agent Card 조회(GET, 5초 기본값)보다 훨씬 여유 있게 잡는다.
+A2A_TASK_TIMEOUT: float = float(os.getenv("A2A_TASK_TIMEOUT", "30.0"))
 
+# Ollama 네이티브 API 엔드포인트 (supervisor의 구조화 출력용 ChatOllama가 사용).
+# OPENAI_BASE_URL(ChatOpenAI 계열이 쓰는 OpenAI 호환 경로, .../v1)과는 별개 설정 —
+# 같은 서버를 가리켜도 문자열 슬라이싱으로 파생시키지 않는다.
+OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+# ---------------------------------------------------------------------------
+# Observe 노드 재시도 정책 (계획서: 타임아웃 2회, 파라미터 오류 2회, 잘못된 Tool 1회, SQL 오류 3회)
+# ---------------------------------------------------------------------------
 MAX_RETRY: Dict[str, int] = {
     "timeout": 2,
     "parameter": 2,

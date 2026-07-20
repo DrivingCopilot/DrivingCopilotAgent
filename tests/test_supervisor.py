@@ -4,8 +4,10 @@ tests/test_supervisor.py
 Supervisor Agent 단위 테스트.
 
 테스트 구성:
-    Mock LLM — app.agents.supervisor.ChatOpenAI 클래스를 patch 해
-               astream() 이 미리 정해둔 JSON 청크를 흘려보내도록 한다.
+    Mock LLM — app.agents.supervisor.ChatOllama 클래스를 patch 해
+               with_structured_output(...).ainvoke() 가 미리 정해둔
+               {"parsed": SupervisorDecision(...), "parsing_error": None}
+               을 반환하도록 한다 (grammar-constrained 구조화 출력 흉내).
     Mock A2A 발견 — _a2a_client.fetch_all_cards 를 patch.
 
 실행 방법:
@@ -19,7 +21,7 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 
 def _make_state(
@@ -40,18 +42,26 @@ def _make_state(
 
 
 def _mock_llm_returning(json_payload: dict):
-    """astream() 이 json_payload 를 한 청크로 흘려보내는 ChatOpenAI Mock 클래스를 patch."""
+    """
+    with_structured_output(...).ainvoke() 가 json_payload로 만든 SupervisorDecision을
+    {"parsed": ..., "parsing_error": None} 형태로 반환하는 ChatOllama Mock을 patch.
+    """
+    from app.agents.supervisor import SupervisorDecision
 
-    async def _astream(_messages):
-        chunk = MagicMock()
-        chunk.content = json.dumps(json_payload)
-        yield chunk
-
+    parsed = SupervisorDecision(**json_payload)
+    mock_structured = MagicMock()
+    mock_structured.ainvoke = AsyncMock(
+        return_value={
+            "raw": AIMessage(content=json.dumps(json_payload)),
+            "parsed": parsed,
+            "parsing_error": None,
+        }
+    )
     mock_instance = MagicMock()
-    mock_instance.astream = _astream
+    mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
 
     mock_cls = MagicMock(return_value=mock_instance)
-    return patch("app.agents.supervisor.ChatOpenAI", new=mock_cls)
+    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
 
 
 class TestSupervisorNode:
@@ -200,4 +210,134 @@ class TestSupervisorNode:
         final_text = result["messages"][0].content
         assert "아니요" in final_text
         assert "비" in final_text
+        assert final_text != llm_payload["reasoning"]
+
+
+def _mock_llm_parsing_error(error: Exception):
+    """with_structured_output(...).ainvoke() 가 parsing_error를 채워 반환하는 Mock을 patch."""
+    mock_structured = MagicMock()
+    mock_structured.ainvoke = AsyncMock(
+        return_value={"raw": AIMessage(content="broken"), "parsed": None, "parsing_error": error}
+    )
+    mock_instance = MagicMock()
+    mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
+    mock_cls = MagicMock(return_value=mock_instance)
+    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
+
+
+class TestSupervisorParsingError:
+    """구조화 출력 파싱 실패(parsing_error) 시 재시도/포기 분기 검증."""
+
+    async def test_retries_when_under_limit(self):
+        state = _make_state()
+        state["error_count"] = {"parameter": 0}
+
+        with (
+            _mock_llm_parsing_error(ValueError("boom")),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "supervisor"
+        assert result["error_count"]["parameter"] == 1
+
+    async def test_gives_up_at_limit(self):
+        state = _make_state()
+        state["error_count"] = {"parameter": 1}  # MAX_RETRY["parameter"] == 2, 이번이 마지막
+
+        with (
+            _mock_llm_parsing_error(ValueError("boom")),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "__end__"
+        assert result["error_count"]["parameter"] == 2
+        assert "실패했습니다" in result["messages"][0].content
+
+
+class TestComposeToolResultSummary:
+    """last_tool_call로부터 결정적 최종 답변을 구성하는 _compose_tool_result_summary 검증."""
+
+    def test_success_uses_result_text_as_is(self):
+        from app.agents.supervisor import _compose_tool_result_summary
+
+        last_tool_call = {"tool": "control_wiper", "params": {"on": True}, "result": "와이퍼를 켰습니다.", "status": "success"}
+        assert _compose_tool_result_summary(last_tool_call) == "와이퍼를 켰습니다."
+
+    def test_error_includes_tool_and_error_msg(self):
+        from app.agents.supervisor import _compose_tool_result_summary
+
+        last_tool_call = {
+            "tool": "control_climate",
+            "params": {},
+            "result": "",
+            "status": "error",
+            "error_type": "parameter",
+            "error_msg": "temperature 값이 범위를 벗어났습니다.",
+        }
+        summary = _compose_tool_result_summary(last_tool_call)
+        assert "control_climate" in summary
+        assert "temperature 값이 범위를 벗어났습니다." in summary
+
+
+class TestFilterInternalPlanSteps:
+    """plan 배열에서 LangGraph 내부 라우팅 예약어를 걸러내는 _filter_internal_plan_steps 검증."""
+
+    def test_removes_end_token(self):
+        from app.agents.supervisor import _filter_internal_plan_steps
+
+        assert _filter_internal_plan_steps(["control_wiper on=true", "__end__"]) == ["control_wiper on=true"]
+
+    def test_keeps_normal_steps_untouched(self):
+        from app.agents.supervisor import _filter_internal_plan_steps
+
+        steps = ["control_wiper on=true", "control_lighting on=true"]
+        assert _filter_internal_plan_steps(steps) == steps
+
+
+class TestSupervisorFinalTextPriority:
+    """final_text 우선순위(vision_results > last_tool_call > last_knowledge_result > reasoning) 검증."""
+
+    async def test_uses_last_tool_call_over_reasoning(self):
+        state = _make_state()
+        state["tool_calls"] = [
+            {"tool": "control_wiper", "params": {"on": True}, "result": "와이퍼를 켰습니다.", "status": "success"}
+        ]
+
+        llm_payload = {
+            "reasoning": "The user's request to turn on the wiper was already fulfilled.",
+            "plan": [],
+            "next_agent": "__end__",
+        }
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        final_text = result["messages"][0].content
+        assert final_text == "와이퍼를 켰습니다."
         assert final_text != llm_payload["reasoning"]

@@ -2,7 +2,8 @@
 #
 # 로컬 LLM(Qwen2-VL 7B 등)이 JSON 객체를 반복 출력하거나 reasoning 텍스트에
 # 중괄호를 포함시켜도 안전하게 파싱하기 위한 공유 유틸리티.
-# supervisor.py / perception.py 양쪽에서 사용한다.
+# perception.py에서 사용한다 (supervisor.py는 ChatOllama의 grammar-constrained
+# 구조화 출력으로 전환하며 더 이상 이 유틸이 필요 없어졌다).
 
 
 def extract_first_json_object(text: str) -> str:

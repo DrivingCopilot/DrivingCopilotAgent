@@ -12,7 +12,7 @@ from typing import Optional
 
 import httpx
 
-from app.a2a.models import AgentCard
+from app.a2a.models import A2ATaskRequest, A2ATaskResponse, AgentCard
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,32 @@ class A2AClient:
         except Exception as exc:
             logger.warning("Agent Card 목록 조회 실패 (%s): %s", url, exc)
             return []
+
+    async def send_task(self, request: A2ATaskRequest) -> A2ATaskResponse:
+        """
+        A2ATaskRequest를 대상 서버(POST /tasks/send)로 전송한다.
+
+        fetch_card/fetch_all_cards와 달리 실패해도 None을 반환하지 않고
+        항상 유효한 A2ATaskResponse(status="error", error_type=...)를 반환한다.
+        호출부(app/graph/a2a_nodes.py)가 널 체크 없이 status/error_type만
+        보고 observe_node 재시도 로직에 바로 흘려보낼 수 있어야 하기 때문이다.
+        """
+        url = f"{self._base_url}/tasks/send"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=request.model_dump())
+                resp.raise_for_status()
+                return A2ATaskResponse(**resp.json())
+        except httpx.TimeoutException as exc:
+            logger.warning("A2A send_task 타임아웃 (%s): %s", url, exc)
+            return A2ATaskResponse(
+                task_id=request.task_id, status="error", error=str(exc), error_type="timeout"
+            )
+        except Exception as exc:
+            logger.warning("A2A send_task 실패 (%s): %s", url, exc)
+            return A2ATaskResponse(
+                task_id=request.task_id, status="error", error=str(exc), error_type="parameter"
+            )
 
     async def discover_registry(self) -> list[dict]:
         """
