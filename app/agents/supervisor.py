@@ -92,6 +92,18 @@ def _infer_intended_agent(reasoning: str) -> str | None:
     return mentioned[0] if len(mentioned) == 1 else None
 
 
+# LangGraph 내부 라우팅 예약어. SupervisorDecision.plan은 List[str]일 뿐 값
+# 자체엔 제약이 없어(217~227줄 grammar-constrained decoding은 스키마 이탈만
+# 막는다), 모델이 next_agent에 쓰는 값을 plan 스텝으로 착각해 그대로
+# hallucinate할 수 있다(예: plan=["__end__"]) — WS로 내보내기 전에 걸러낸다.
+_INTERNAL_ROUTING_TOKENS = {"__end__", "end", "__start__", "start"}
+
+
+def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
+    """plan 배열에서 LangGraph 내부 라우팅 예약어만 제거한다(사용자 노출용)."""
+    return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
+
+
 def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = "") -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
@@ -121,6 +133,21 @@ def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = ""
         return f"{labels}가 감지되었습니다. (카메라 상황: {description})"
 
     return f"비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다. (카메라 상황: {description})"
+
+
+def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
+    """
+    execution 위임 완료 후 최종 답변을 last_tool_call로부터 결정적으로 구성한다.
+    _compose_vision_summary와 동일한 원칙 — reasoning(CoT)은 instruction-following
+    불안정으로 신뢰할 수 없으므로, 이미 자연어인 tool 실행 결과(result)를 그대로
+    노출한다. 키 구조는 execution.py/a2a_nodes.py 양쪽에서 동일하게
+    {"tool", "params", "result", "status", (error 시) "error_type", "error_msg"}.
+    """
+    tool = last_tool_call.get("tool", "")
+    if last_tool_call.get("status") == "success":
+        return last_tool_call.get("result") or f"{tool} 실행을 완료했습니다."
+    error_msg = last_tool_call.get("error_msg") or last_tool_call.get("result") or "알 수 없는 오류"
+    return f"{tool} 실행에 실패했습니다: {error_msg}"
 
 
 async def _build_dynamic_agent_cards() -> str:
@@ -257,6 +284,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     vision_results = context_data.get("vision_results", {})
     tool_calls = state.get("tool_calls", [])
     last_tool_call = tool_calls[-1] if tool_calls else {}
+    last_knowledge_result = context_data.get("last_knowledge_result", "")
 
     context_str = f"""[Context Data]
 - Route Type Hint: {route_type}
@@ -372,17 +400,28 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     # 가 있는 상태로 턴이 끝나면 — Rule 2 위반으로 강제 종료됐든 모델이 스스로
     # __end__ 를 택했든 동일하게 — reasoning(모델의 CoT, 신뢰 불가)이 아니라
     # vision_results 로부터 결정적으로 답변을 구성한다.
+    # 우선순위: vision_results > last_tool_call > last_knowledge_result > reasoning.
+    # 앞 세 경우는 결정적(코드 레벨)으로 답변을 구성할 수 있는 자연어 데이터가
+    # 이미 있으므로 reasoning(CoT)에 기대지 않는다. 셋 다 없는 순수 대화 종료
+    # 케이스(예: 델리게이션 없이 바로 답하는 잡담)만 reasoning 폴백에 남는다 —
+    # 이 잔여 케이스는 이번 수정 범위 밖.
     final_text = reasoning
     if next_agent == "__end__" and vision_results:
         user_query = messages[0].content if messages else ""
         final_text = _compose_vision_summary(vision_results, user_query)
+    elif next_agent == "__end__" and last_tool_call:
+        final_text = _compose_tool_result_summary(last_tool_call)
+    elif next_agent == "__end__" and last_knowledge_result:
+        final_text = last_knowledge_result
 
     # frontend AG-UI 프로토콜: reasoning(사고 과정 accordion), plan(실행 계획 카드)을
-    # 각각의 프레임으로 전달한다.
+    # 각각의 프레임으로 전달한다. WS로 나가는 plan은 라우팅에 쓰이는 new_plan과
+    # 별개로 필터링한다 — route_next 등이 참조하는 반환값(new_plan)은 그대로 둔다.
     if reasoning:
         await _ws.websocket_manager.send_status(json.dumps({"type": "reasoning", "data": reasoning}))
-    if new_plan:
-        await _ws.websocket_manager.send_status(json.dumps({"type": "plan", "data": new_plan}))
+    plan_for_ws = _filter_internal_plan_steps(new_plan)
+    if plan_for_ws:
+        await _ws.websocket_manager.send_status(json.dumps({"type": "plan", "data": plan_for_ws}))
 
     await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"Delegating task to {next_agent}"}))
 

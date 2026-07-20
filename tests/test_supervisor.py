@@ -268,3 +268,76 @@ class TestSupervisorParsingError:
         assert result["next_agent"] == "__end__"
         assert result["error_count"]["parameter"] == 2
         assert "실패했습니다" in result["messages"][0].content
+
+
+class TestComposeToolResultSummary:
+    """last_tool_call로부터 결정적 최종 답변을 구성하는 _compose_tool_result_summary 검증."""
+
+    def test_success_uses_result_text_as_is(self):
+        from app.agents.supervisor import _compose_tool_result_summary
+
+        last_tool_call = {"tool": "control_wiper", "params": {"on": True}, "result": "와이퍼를 켰습니다.", "status": "success"}
+        assert _compose_tool_result_summary(last_tool_call) == "와이퍼를 켰습니다."
+
+    def test_error_includes_tool_and_error_msg(self):
+        from app.agents.supervisor import _compose_tool_result_summary
+
+        last_tool_call = {
+            "tool": "control_climate",
+            "params": {},
+            "result": "",
+            "status": "error",
+            "error_type": "parameter",
+            "error_msg": "temperature 값이 범위를 벗어났습니다.",
+        }
+        summary = _compose_tool_result_summary(last_tool_call)
+        assert "control_climate" in summary
+        assert "temperature 값이 범위를 벗어났습니다." in summary
+
+
+class TestFilterInternalPlanSteps:
+    """plan 배열에서 LangGraph 내부 라우팅 예약어를 걸러내는 _filter_internal_plan_steps 검증."""
+
+    def test_removes_end_token(self):
+        from app.agents.supervisor import _filter_internal_plan_steps
+
+        assert _filter_internal_plan_steps(["control_wiper on=true", "__end__"]) == ["control_wiper on=true"]
+
+    def test_keeps_normal_steps_untouched(self):
+        from app.agents.supervisor import _filter_internal_plan_steps
+
+        steps = ["control_wiper on=true", "control_lighting on=true"]
+        assert _filter_internal_plan_steps(steps) == steps
+
+
+class TestSupervisorFinalTextPriority:
+    """final_text 우선순위(vision_results > last_tool_call > last_knowledge_result > reasoning) 검증."""
+
+    async def test_uses_last_tool_call_over_reasoning(self):
+        state = _make_state()
+        state["tool_calls"] = [
+            {"tool": "control_wiper", "params": {"on": True}, "result": "와이퍼를 켰습니다.", "status": "success"}
+        ]
+
+        llm_payload = {
+            "reasoning": "The user's request to turn on the wiper was already fulfilled.",
+            "plan": [],
+            "next_agent": "__end__",
+        }
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        final_text = result["messages"][0].content
+        assert final_text == "와이퍼를 켰습니다."
+        assert final_text != llm_payload["reasoning"]

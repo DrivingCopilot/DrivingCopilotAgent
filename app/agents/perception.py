@@ -63,9 +63,24 @@ def _parse_vision_response(raw: str) -> Tuple[str, List[str]]:
         parsed = json.loads(extract_first_json_object(raw.strip()))
         description = parsed.get("description") or raw
         hazards = [h for h in parsed.get("hazards", []) if h in HAZARD_PLAN_STEPS]
+        hazards = _sanity_check_hazards(description, hazards)
         return description, hazards
     except (json.JSONDecodeError, AttributeError, TypeError):
         return raw, []
+
+
+# description(자유 텍스트)에 이 키워드가 있으면 VLM이 "위험 없음"이라고 서술한
+# 것으로 간주해, hazards에 그와 모순되는 항목이 남아있으면 제거한다. VLM
+# 환각(hallucination)에 대한 완벽한 해결책이 아니라 description과 hazards가
+# 서로 명백히 모순되는 케이스만 걸러내는 규칙 기반 필터다.
+_CLEAR_WEATHER_KEYWORDS = ("맑", "화창", "clear", "비 안", "비가 안", "눈 안", "눈이 안")
+
+
+def _sanity_check_hazards(description: str, hazards: List[str]) -> List[str]:
+    """description이 명시적으로 맑은 날씨를 서술하면 hazards의 'rain'을 제거한다."""
+    if "rain" in hazards and any(kw in description for kw in _CLEAR_WEATHER_KEYWORDS):
+        return [h for h in hazards if h != "rain"]
+    return hazards
 
 
 # 모듈 레벨 싱글턴 — execution.py 의 _EXTRACTION_LLM 과 동일한 lazy init 패턴.
