@@ -114,7 +114,7 @@ Your task is to convert the user's natural language question into a strictly val
 ### SQL Query
 """
         )
-        llm = ChatOpenAI(model="qwen2-vl-1.5b-instruct-int4", temperature=0.7)
+        llm = ChatOpenAI(model="qwen2.5:1.5b", temperature=0.7)
         
         
         chain = sql_prompt | llm | StrOutputParser()

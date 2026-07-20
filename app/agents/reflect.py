@@ -54,7 +54,7 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
     if next_agent == "__end__":
         logger.info("reflect: failure 케이스 진입 — lesson 생성 및 experience 저장")
 
-        llm = ChatOpenAI(model="qwen2-vl-7b-instruct-int4", temperature=0.1)
+        llm = ChatOpenAI(model="qwen2.5vl:7b", temperature=0.1)
 
         # feedback에서 error_type 추출 (observe가 기록한 형식 파싱)
         error_type = "parameter"

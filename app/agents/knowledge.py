@@ -82,8 +82,8 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         
     instruction_msg = HumanMessage(content=f"[Supervisor Instruction] {instruction_text}")
     
-    # 2. Setup LLM & Tools (G1: Executor uses Qwen2-VL 1.5B)
-    llm = ChatOpenAI(model="qwen2-vl-1.5b-instruct-int4", temperature=0.1)
+    # 2. Setup LLM & Tools (G1: Executor uses Qwen2.5 1.5B)
+    llm = ChatOpenAI(model="qwen2.5:1.5b", temperature=0.1)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
     
     agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
