@@ -27,10 +27,14 @@ _EXTRACTOR_SYSTEM_PROMPT = (
     "IMPORTANT: Exclude any temporary or transient preferences that include time "
     "references such as 'today', 'now', 'currently', 'right now', 'for today', "
     "'지금', '오늘', '현재', or similar expressions.\n"
+    "NEGATION RULE: If the user explicitly cancels, withdraws, or negates a "
+    "previously stated preference for one of the categories above (e.g. "
+    "'더 이상 재즈 안 들어', 'stop navigation voice guidance', '시트 포지션 설정 취소해'), "
+    "set that category's value to JSON null (not the string \"null\", not an empty "
+    "string) instead of omitting it or describing the negation in words.\n"
     "Return ONLY a valid JSON object with no explanation, no markdown, no code fences.\n"
     "If no persistent preferences are found, return {}."
 )
-
 
 class EntityMemory:
     """사용자 차량 선호도를 로컬 JSON 파일에 저장하는 KV Store."""
@@ -52,17 +56,34 @@ class EntityMemory:
         return data
 
     def update(self, prefs: dict[str, Any]) -> None:
-        """선호도를 last-write-wins 방식으로 병합 저장. 빈 dict → no-op."""
+        """선호도를 last-write-wins 방식으로 병합 저장.
+
+        prefs 값이 None인 키는 negation으로 간주하여 기존 프로필에서 삭제한다.
+        빈 dict → no-op.
+        """
         if not prefs:
             return
         existing = self.load()
-        existing.update(prefs)
+
+        deleted_keys = []
+        for key, value in prefs.items():
+            if value is None:
+                if key in existing:
+                    del existing[key]
+                    deleted_keys.append(key)
+            else:
+                existing[key] = value
+
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(existing, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        logger.info("entity_memory 업데이트: %s", list(prefs.keys()))
+        if deleted_keys:
+            logger.info("entity_memory 삭제(negation): %s", deleted_keys)
+        updated_keys = [k for k, v in prefs.items() if v is not None]
+        if updated_keys:
+            logger.info("entity_memory 업데이트: %s", updated_keys)
 
 
 async def extract_preferences(user_message: str, llm: BaseChatModel) -> dict[str, Any]:
