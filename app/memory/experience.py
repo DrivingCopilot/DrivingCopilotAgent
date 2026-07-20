@@ -85,7 +85,7 @@ class ExperienceMemory:
             search_filter = Filter(
                 must=[
                     FieldCondition(
-                        key="route_type",
+                        key="metadata.route_type",
                         match=MatchValue(value=route_type),
                     )
                 ]
@@ -151,7 +151,7 @@ class ExperienceMemory:
         search_filter = Filter(
             must=[
                 FieldCondition(
-                    key="route_type",
+                    key="metadata.route_type",
                     match=MatchValue(value=route_type),
                 )
             ]

@@ -10,7 +10,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
 
+from app.core.config import VECTOR_SIZE
 from app.memory.experience import ExperienceMemory
 
 
@@ -93,3 +98,58 @@ def test_save_proceeds_when_dedup_search_fails(monkeypatch):
 
     assert result is True
     vectorstore.add_documents.assert_called_once()
+
+
+class _FixedEmbeddings(Embeddings):
+    """필터 매칭 검증용 — 벡터값 자체는 무관하므로 고정 벡터 반환."""
+
+    def embed_documents(self, texts):
+        return [[0.1] * VECTOR_SIZE for _ in texts]
+
+    def embed_query(self, text):
+        return [0.1] * VECTOR_SIZE
+
+
+def _make_real_memory_with_inmemory_qdrant() -> ExperienceMemory:
+    """실제 로컬 Qdrant 백엔드(:memory:)로 _vectorstore를 구성한다.
+    MagicMock과 달리 LangChain이 실제로 만드는 중첩 payload
+    ({'page_content':..., 'metadata': {...}})에 대해 진짜 Filter가 매칭되는지 검증 가능."""
+    client = QdrantClient(location=":memory:")
+    collection_name = "test_experience_regression"
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=qmodels.VectorParams(size=VECTOR_SIZE, distance=qmodels.Distance.COSINE),
+    )
+    vectorstore = QdrantVectorStore(
+        client=client, collection_name=collection_name, embedding=_FixedEmbeddings()
+    )
+    memory = ExperienceMemory.__new__(ExperienceMemory)
+    memory._vectorstore = vectorstore
+    return memory
+
+
+def test_has_near_duplicate_matches_real_nested_payload_route_type_filter():
+    """회귀 테스트: LangChain이 metadata를 payload에 중첩 저장하므로
+    FieldCondition key는 'metadata.route_type'이어야 매칭된다.
+    (수정 전 key='route_type'이면 이 테스트는 실패한다 — 항상 매칭 실패 → dedup 무력화)"""
+    memory = _make_real_memory_with_inmemory_qdrant()
+    situation = "query: 창문 열어줘 | route_type: tool | vehicle_state: {}"
+    memory._vectorstore.add_documents(
+        [Document(page_content=situation, metadata={"lesson": "재시도 전략", "route_type": "tool"})]
+    )
+
+    assert memory._has_near_duplicate(situation, "tool") is True
+
+
+def test_search_matches_real_nested_payload_route_type_filter():
+    """회귀 테스트: search()의 route_type 필터도 동일한 중첩 구조를 매칭해야 한다."""
+    memory = _make_real_memory_with_inmemory_qdrant()
+    situation = "query: 창문 열어줘 | route_type: tool | vehicle_state: {}"
+    memory._vectorstore.add_documents(
+        [Document(page_content=situation, metadata={"lesson": "재시도 전략", "route_type": "tool"})]
+    )
+
+    results = memory.search(situation, route_type="tool", top_k=5)
+
+    assert len(results) == 1
+    assert results[0].metadata["lesson"] == "재시도 전략"
