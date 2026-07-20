@@ -24,6 +24,7 @@ QDRANT_URL = "http://localhost:6333"   # Docker/A6000 서버 모드 URL
 COLLECTION_NAME = "vehicle_manuals"    # Qdrant 컬렉션 이름
 EXPERIENCE_COLLECTION_NAME = "experience_memory"  # ReAct Reflect 실패 경험 컬렉션
 EXPERIENCE_TOP_K = 5                   # supervisor experience 검색 상위 결과 수
+EXPERIENCE_DEDUP_THRESHOLD: float = 0.95  # 코사인 유사도 임계값. 이상이면 근접 중복으로 간주해 저장 스킵
 WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (계획서 2.5)
 
 # 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
