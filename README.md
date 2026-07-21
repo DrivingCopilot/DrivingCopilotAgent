@@ -38,23 +38,25 @@ DrivingCopilotAgent/
 
 Supervisor는 knowledge/execution/perception과 A2A(HTTP)로 통신하는 독립 프로세스이고,
 전체 E2E를 위해서는 이 레포 + `DrivingCopilotBackend` + `DrivingCopilotFrontend` +
-Ollama까지 총 4곳이 같이 떠 있어야 합니다.
+로컬 모델 서버까지 총 4곳이 같이 떠 있어야 합니다.
 
 ```
 Frontend(3000) --WS--> Supervisor(8001) --A2A HTTP--> knowledge/execution/perception(8002~8004)
 Frontend(3000) --REST--> Backend(8000, vehicle-state/camera-frame)
 knowledge/execution/perception --MCP--> Backend mcp_server.py(9000)
-전체 LLM 호출 --> Ollama(11434)
+전체 LLM 호출 --> 로컬 모델 서버(11500, app/model_server — HuggingFace transformers)
 ```
+
+로컬 모델 서버는 Ollama를 대체하는 이 레포 자체 프로세스입니다(`app/model_server`).
+`Qwen2-VL-7B-Instruct`(7B, 로딩 시점에 bitsandbytes 4bit로 즉석 양자화)와
+`Qwen2.5-1.5B-Instruct`(1.5B) 두 모델을 프로세스 시작 시 한 번만 GPU에 로드하고,
+OpenAI 호환 API로 Supervisor/Knowledge/Execution/Perception 4곳에 서빙합니다 —
+GPU 1개(VRAM 8GB 기준)에 모델을 1벌씩만 올리기 위한 구조라 4개 에이전트 프로세스가
+각자 모델을 로드하지 않습니다. (사전 양자화된 GPTQ 체크포인트 대신 bnb 4bit를 쓰는
+이유: GPTQ는 Marlin 커널을 JIT 컴파일해야 하는데, Ampere 이전 세대 GPU(Colab 무료
+T4 등)에서 컴파일 후 로딩이 멈추는 문제가 있어 피한다.)
 
 ### 0. 사전 준비 (한 번만)
-
-**Ollama 모델 준비** (Mac/Windows 공통 — Ollama 자체가 이미 설치·실행 중이어야 함)
-
-```bash
-ollama pull qwen2.5vl:7b                # Supervisor/Execution(tool 추출)/Reflect/Perception(Vision)
-ollama pull qwen2.5:1.5b                # Knowledge/Text2SQL/선호도 추출 (텍스트 전용, 가벼움)
-```
 
 **.env 파일 준비**
 
@@ -65,7 +67,10 @@ cp .env.example .env
 copy .env.example .env
 ```
 
-`.env.example`에 필요한 값과 설명이 이미 있습니다 — 로컬 Ollama만 쓴다면 기본값 그대로 둬도 됩니다.
+`.env.example`에 필요한 값과 설명이 이미 있습니다 — 기본값 그대로 둬도 됩니다.
+모델 가중치는 별도로 받을 필요 없이, 아래 3번 단계에서 모델 서버가 처음 뜰 때
+HuggingFace Hub에서 자동으로 다운로드됩니다(최초 1회, 7B(비양자화 체크포인트,
+로딩 시 4bit 변환) + 1.5B 합쳐 ~18GB — `~/.cache/huggingface`에 캐시).
 
 ### 1. 가상환경 + 패키지 설치
 
@@ -98,24 +103,30 @@ python mcp_server.py
 
 ### 3. 이 레포(Agent) 실행
 
-**Mac / Linux** — 스크립트 하나로 4개 프로세스(8001~8004) 동시 기동
+**Mac / Linux** — 스크립트 하나로 모델 서버(11500) + 4개 에이전트 프로세스(8001~8004) 동시 기동
 ```bash
 bash scripts/run_agents.sh
 ```
+모델 서버가 `/health`로 `{"status":"ok"}`를 반환할 때까지 자동으로 기다린 뒤 나머지
+4개 프로세스를 띄웁니다. 최초 실행 시 HuggingFace 다운로드가 겹치면 몇 분 걸릴 수
+있습니다.
 
 **Windows** — `scripts/run_agents.sh`는 bash 전용이라 그대로 못 돌립니다. 터미널을
-4개 열어 각각 실행하세요 (WSL이나 Git Bash를 쓴다면 위 스크립트를 그대로 써도 됩니다).
+5개 열어 각각 실행하세요 (WSL이나 Git Bash를 쓴다면 위 스크립트를 그대로 써도 됩니다).
 ```powershell
-# 터미널 1 — Supervisor (8001)
+# 터미널 1 — 로컬 모델 서버 (11500) — 이 서버가 "ok" 뜰 때까지 기다린 뒤 아래를 실행
+python -m app.model_server.server
+
+# 터미널 2 — Supervisor (8001)
 python main.py
 
-# 터미널 2 — Knowledge (8002)
+# 터미널 3 — Knowledge (8002)
 python -m app.a2a.server knowledge
 
-# 터미널 3 — Execution (8003)
+# 터미널 4 — Execution (8003)
 python -m app.a2a.server execution
 
-# 터미널 4 — Perception (8004)
+# 터미널 5 — Perception (8004)
 python -m app.a2a.server perception
 ```
 
@@ -138,15 +149,15 @@ npm run dev
 | 8003 | Execution | 본 레포 |
 | 8004 | Perception | 본 레포 |
 | 9000 | MCP 서버 | DrivingCopilotBackend |
-| 11434 | Ollama | (전역) |
+| 11500 | 로컬 모델 서버 | 본 레포 (`app/model_server`) |
 
 ```bash
 # Mac/Linux
-lsof -iTCP -sTCP:LISTEN -P | grep -E ":3000|:8000|:8001|:8002|:8003|:8004|:9000|:11434"
+lsof -iTCP -sTCP:LISTEN -P | grep -E ":3000|:8000|:8001|:8002|:8003|:8004|:9000|:11500"
 ```
 ```powershell
 # Windows
-netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11434"
+netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11500"
 ```
 
 ### 자주 겪는 문제
@@ -155,14 +166,16 @@ netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11434"
   `python mcp_server.py`를 REST API(8000)와 별개로 반드시 띄워야 합니다.
 - **`api_key` 관련 에러**: `.env`가 비어있거나, `.env`를 고친 뒤 서버를 재시작 안 한 경우입니다.
   값 수정 후에는 해당 프로세스를 반드시 재시작하세요.
-- **모델 404 (`model not found`)**: 위 Ollama 모델 2개(`qwen2.5vl:7b`, `qwen2.5:1.5b`)가
-  다 pull됐는지 `ollama list`로 확인하세요. `qwen2-vl-7b-instruct-int4` 같은 이름은
-  Ollama 공식 라이브러리에 없으므로 `ollama pull`로 받을 수 없습니다(로컬에서
-  `ollama cp`로 별칭을 만든 게 아니라면) — 코드도 전부 `qwen2.5vl:7b`를 직접 쓰도록
-  맞춰뒀습니다.
-- **첫 질문에서 몇십 초씩 멈춤**: 첫 실행 시 `BAAI/bge-m3` 임베딩 모델(2GB+)을
-  HuggingFace에서 내려받습니다. 프로세스당 한 번만 겪는 정상 동작이고, 이후엔
-  캐시(`~/.cache/huggingface`)에서 바로 로드됩니다.
+- **CUDA out of memory**: VRAM 8GB 기준으로 7B(bnb 4bit, ~5~6GB) + 1.5B(~3GB)가
+  타이트합니다. 다른 GPU 프로세스를 먼저 종료하거나, `QWEN_TEXT_MODEL_NAME`을 더 작은
+  양자화 모델로 바꿔보세요.
+- **모델 서버가 "loading"에서 안 넘어감**: 최초 실행 시 `Qwen2-VL-7B-Instruct`(비양자화,
+  ~15GB) + `Qwen2.5-1.5B-Instruct`를 HuggingFace에서 내려받습니다. 네트워크 상태에
+  따라 꽤 걸릴 수 있고, 이후엔 `~/.cache/huggingface`에서 바로 로드됩니다. (참고: GPTQ
+  사전양자화 체크포인트를 쓰던 이전 방식은 Marlin 커널 JIT 컴파일이 Ampere 이전 세대
+  GPU에서 멈추는 문제가 있어 bnb 4bit 즉석 양자화로 바꿨다 — 커널 컴파일이 없다.)
+- **첫 질문에서 몇십 초씩 멈춤**: `BAAI/bge-m3` 임베딩 모델(2GB+)도 최초 1회 별도로
+  HuggingFace에서 내려받습니다. 프로세스당 한 번만 겪는 정상 동작입니다.
 
 ### 서비스 포트 매핑
 
@@ -187,3 +200,6 @@ netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11434"
 | `AGENT_HOST` | `0.0.0.0` | supervisor 바인딩 호스트 |
 | `AGENT_PORT` | `8001` | supervisor 포트 |
 | `BACKEND_URL` | `http://localhost:8000` | 백엔드 위치 (server-to-server 호출용) |
+| `MODEL_SERVER_URL` | `http://localhost:11500/v1` | 로컬 모델 서버(OpenAI 호환) 위치 |
+| `QWEN_VL_MODEL_NAME` | `Qwen/Qwen2-VL-7B-Instruct` | 7B 모델(계획/추론/비전, 로딩 시 bnb 4bit 양자화) |
+| `QWEN_TEXT_MODEL_NAME` | `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B 모델(Knowledge/Text2SQL/선호도) |

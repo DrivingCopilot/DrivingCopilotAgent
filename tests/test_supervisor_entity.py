@@ -9,7 +9,7 @@ from app.agents.supervisor import SupervisorDecision, supervisor_node
 
 def _mock_structured_llm(payload: dict) -> MagicMock:
     """with_structured_output(...).ainvoke() 가 payload로 만든 SupervisorDecision을
-    {"parsed": ..., "parsing_error": None}으로 반환하는 ChatOllama 인스턴스 Mock."""
+    {"parsed": ..., "parsing_error": None}으로 반환하는 ChatOpenAI 인스턴스 Mock."""
     parsed = SupervisorDecision(**payload)
     mock_structured = MagicMock()
     mock_structured.ainvoke = AsyncMock(
@@ -42,7 +42,7 @@ async def test_profile_injected_in_context():
 
     mock_llm = _mock_structured_llm({"reasoning": "ok", "plan": [], "next_agent": "__end__"})
 
-    with patch("app.agents.supervisor.ChatOllama", return_value=mock_llm), \
+    with patch("app.agents.supervisor.ChatOpenAI", return_value=mock_llm), \
          patch("app.agents.supervisor._get_entity_memory", return_value=mock_em), \
          patch("app.agents.supervisor._ws.websocket_manager.send_status", new=AsyncMock()):
         await supervisor_node(_base_state())
@@ -60,7 +60,7 @@ async def test_empty_profile_injected_in_context():
 
     mock_llm = _mock_structured_llm({"reasoning": "ok", "plan": [], "next_agent": "__end__"})
 
-    with patch("app.agents.supervisor.ChatOllama", return_value=mock_llm), \
+    with patch("app.agents.supervisor.ChatOpenAI", return_value=mock_llm), \
          patch("app.agents.supervisor._get_entity_memory", return_value=mock_em), \
          patch("app.agents.supervisor._ws.websocket_manager.send_status", new=AsyncMock()):
         await supervisor_node(_base_state())

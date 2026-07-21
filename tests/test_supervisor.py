@@ -4,10 +4,10 @@ tests/test_supervisor.py
 Supervisor Agent 단위 테스트.
 
 테스트 구성:
-    Mock LLM — app.agents.supervisor.ChatOllama 클래스를 patch 해
+    Mock LLM — app.agents.supervisor.ChatOpenAI 클래스를 patch 해
                with_structured_output(...).ainvoke() 가 미리 정해둔
                {"parsed": SupervisorDecision(...), "parsing_error": None}
-               을 반환하도록 한다 (grammar-constrained 구조화 출력 흉내).
+               을 반환하도록 한다 (구조화 출력 흉내).
     Mock A2A 발견 — _a2a_client.fetch_all_cards 를 patch.
 
 실행 방법:
@@ -44,7 +44,7 @@ def _make_state(
 def _mock_llm_returning(json_payload: dict):
     """
     with_structured_output(...).ainvoke() 가 json_payload로 만든 SupervisorDecision을
-    {"parsed": ..., "parsing_error": None} 형태로 반환하는 ChatOllama Mock을 patch.
+    {"parsed": ..., "parsing_error": None} 형태로 반환하는 ChatOpenAI Mock을 patch.
     """
     from app.agents.supervisor import SupervisorDecision
 
@@ -61,7 +61,7 @@ def _mock_llm_returning(json_payload: dict):
     mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
 
     mock_cls = MagicMock(return_value=mock_instance)
-    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
+    return patch("app.agents.supervisor.ChatOpenAI", new=mock_cls)
 
 
 class TestSupervisorNode:
@@ -222,7 +222,7 @@ def _mock_llm_parsing_error(error: Exception):
     mock_instance = MagicMock()
     mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
     mock_cls = MagicMock(return_value=mock_instance)
-    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
+    return patch("app.agents.supervisor.ChatOpenAI", new=mock_cls)
 
 
 class TestSupervisorParsingError:

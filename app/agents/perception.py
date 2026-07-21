@@ -5,13 +5,14 @@
 # 흐름:
 #     supervisor (next_agent=perception) → perception_node(state)
 #         ├ Backend MCP 의 get_camera_frame 으로 카메라 프레임(base64 JPEG) 조회
-#         ├ 프레임을 멀티모달 메시지로 감싸 Vision LLM(Qwen2-VL 7B FP16) 호출
+#         ├ 프레임을 멀티모달 메시지로 감싸 Vision LLM(Qwen2-VL-7B-Instruct-GPTQ-Int4) 호출
 #         ├ 응답을 description/hazards 로 구조화 파싱
 #         └ 분석 결과를 context_data.vision_results 에 담아 supervisor 로 복귀
 #             (hazard 감지 시 plan 에 자동 대응 조치를 채워 execution 으로 직행 — 아래 참고)
 #
-# 모델 라우팅(계획서 2.4절): Planner/Executor(Qwen2-VL INT4)와 별도로
-# Vision 전용 FP16 모델을 사용한다 — PERCEPTION_VLM_MODEL/BASE_URL 로 설정.
+# 모델 라우팅: Supervisor/Execution/Reflect 와 동일한 7B 모델(QWEN_VL_MODEL_NAME)을
+# 공유한다 — app/model_server 가 프로세스당 한 벌만 로드해 서빙하므로, 텍스트/비전
+# 요청 모두 이 한 모델로 처리된다(app/core/config.py, app/model_server/server.py).
 #
 # 멀티모달 트리거(계획서 6번 항목): 비/터널/경고등 감지 시 execution agent의
 # tool을 자동 호출해야 한다. supervisor(7B 모델)의 JSON 판단에 이 안전 트리거를
@@ -27,7 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
-from app.core.config import PERCEPTION_VLM_BASE_URL, PERCEPTION_VLM_MODEL
+from app.core.config import MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.core.json_utils import extract_first_json_object
 from app.core.mcp_client import call_mcp_tool_once
 from app.graph import ws as _ws
@@ -91,10 +92,9 @@ def _get_vision_llm() -> ChatOpenAI:
     """_VISION_LLM 싱글턴을 반환한다. 최초 호출 시 생성된다."""
     global _VISION_LLM
     if _VISION_LLM is None:
-        kwargs: Dict[str, Any] = {"model": PERCEPTION_VLM_MODEL, "temperature": 0.1}
-        if PERCEPTION_VLM_BASE_URL:
-            kwargs["base_url"] = PERCEPTION_VLM_BASE_URL
-        _VISION_LLM = ChatOpenAI(**kwargs)
+        _VISION_LLM = ChatOpenAI(
+            model=QWEN_VL_MODEL_NAME, temperature=0.1, base_url=MODEL_SERVER_URL,
+        )
     return _VISION_LLM
 
 
@@ -104,7 +104,7 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
 
     logger.info(
         "perception_node 시작: route_type=%s vlm_model=%s",
-        state.get("route_type"), PERCEPTION_VLM_MODEL,
+        state.get("route_type"), QWEN_VL_MODEL_NAME,
     )
 
     await _ws.websocket_manager.send_status(

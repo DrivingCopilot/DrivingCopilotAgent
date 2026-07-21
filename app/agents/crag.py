@@ -54,6 +54,7 @@ from typing import Any, Dict, List
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from app.graph.state import AgentState
 from app.graph import ws as _ws
 from app.core.json_utils import extract_first_json_object
@@ -68,9 +69,9 @@ logger = logging.getLogger(__name__)
 # 재검색(transform_query → knowledge) 최대 반복 횟수. 무한 루프 방지용.
 MAX_CRAG_ATTEMPTS = 1
 
-# 평가/재작성/정제에 사용하는 LLM. knowledge Executor와 동일 계열(qwen2.5:1.5b)로 맞춘다.
+# 평가/재작성/정제에 사용하는 LLM. knowledge Executor와 동일 계열(QWEN_TEXT_MODEL_NAME)로 맞춘다.
 # CRAG_MODEL 로 오버라이드 가능 — knowledge_node의 KNOWLEDGE_MODEL 규약과 동일.
-CRAG_GRADER_MODEL = os.getenv("CRAG_MODEL", "qwen2.5:1.5b")
+CRAG_GRADER_MODEL = os.getenv("CRAG_MODEL", QWEN_TEXT_MODEL_NAME)
 
 # grade 파싱 실패 등 예외 시 기본 판정 — transform(재검색)으로 흘려 교정 기회를 준다.
 _DEFAULT_GRADE = "ambiguous"
@@ -182,6 +183,7 @@ async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
         model=CRAG_GRADER_MODEL,
         temperature=0.0,
         max_tokens=200,
+        base_url=MODEL_SERVER_URL,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
 
@@ -219,7 +221,7 @@ async def transform_query_node(state: AgentState) -> Dict[str, Any]:
     attempts = int(context_data.get("crag_attempts", 0)) + 1
     original_query = _effective_query(state)
 
-    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.2, max_tokens=200)
+    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.2, max_tokens=200, base_url=MODEL_SERVER_URL)
 
     try:
         response = await llm.ainvoke(
@@ -257,7 +259,7 @@ async def refine_knowledge_node(state: AgentState) -> Dict[str, Any]:
         logger.info("refine_knowledge: 검색 결과 없음 — 정제 생략")
         return {"context_data": {}}
 
-    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.0, max_tokens=512)
+    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.0, max_tokens=512, base_url=MODEL_SERVER_URL)
 
     try:
         response = await llm.ainvoke(

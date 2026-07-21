@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.config import MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.mcp_client import call_mcp_tool_raw as _call_mcp_tool_raw
@@ -89,7 +90,6 @@ Rules:
 
 # 모듈 레벨 싱글턴 — plan step마다 새 인스턴스를 만들지 않는다.
 # None 으로 시작하는 lazy init: import 시점에 API key 검증을 하지 않는다.
-# TODO: 로컬 qwen2-vl 서버 기동 후 base_url 추가
 _EXTRACTION_LLM: Optional[ChatOpenAI] = None
 
 
@@ -97,7 +97,9 @@ def _get_extraction_llm() -> ChatOpenAI:
     """_EXTRACTION_LLM 싱글턴을 반환한다. 최초 호출 시 생성된다."""
     global _EXTRACTION_LLM
     if _EXTRACTION_LLM is None:
-        _EXTRACTION_LLM = ChatOpenAI(model="qwen2.5vl:7b", temperature=0.0)
+        _EXTRACTION_LLM = ChatOpenAI(
+            model=QWEN_VL_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
+        )
     return _EXTRACTION_LLM
 
 

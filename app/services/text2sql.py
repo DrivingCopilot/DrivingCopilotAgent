@@ -8,7 +8,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME, DB_PATH
+from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME, DB_PATH, MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
@@ -114,7 +114,7 @@ Your task is to convert the user's natural language question into a strictly val
 ### SQL Query
 """
         )
-        llm = ChatOpenAI(model="qwen2.5:1.5b", temperature=0.7)
+        llm = ChatOpenAI(model=QWEN_TEXT_MODEL_NAME, temperature=0.7, base_url=MODEL_SERVER_URL)
         
         
         chain = sql_prompt | llm | StrOutputParser()

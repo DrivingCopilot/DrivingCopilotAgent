@@ -105,6 +105,11 @@ async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any
     result = dict(response.result or {})
     if "messages" in result:
         result["messages"] = deserialize_messages(result["messages"])
+    # 성공 시에도 실패 시(위 90~103줄)와 동일하게 plan을 비운다 — 안 비우면
+    # supervisor가 넣어둔 낡은 plan이 남아 다음 supervisor_node 호출의
+    # [Current Plan] 컨텍스트에 그대로 다시 들어가고, 모델이 "아직 할 일이
+    # 남았다"고 오인해 같은 plan/next_agent를 무한 반복하는 루프가 생긴다.
+    result.setdefault("plan", [])
     return result
 
 

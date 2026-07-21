@@ -12,12 +12,12 @@ import logging
 from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
-from app.core.config import AGENT_PORT, OLLAMA_BASE_URL
+from app.core.config import AGENT_PORT, MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
@@ -191,7 +191,7 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - User: "에어컨 22도로 켜줘" -> plan: ["control_climate temperature=22 on=true"], next_agent: "execution"
    - User: "긴급 상황이야 신고해줘" -> plan: ["trigger_emergency kind=call"], next_agent: "execution"
 5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
-6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'.
+6. If 'Vision/Perception Results', 'Last Tool Call Result', or 'Last Knowledge Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'. Never delegate to 'knowledge' again once 'Last Knowledge Result' is already populated for this request.
 7. If 'Vision/Perception Results' shows detected hazards (e.g. rain, tunnel, warning_light) AND 'Last Tool Call Result' shows a related action was already taken, explicitly mention BOTH the detected condition and the action taken in your summary — the action was triggered automatically by the Perception agent, not requested by the user.
 8. Always output your response in strictly valid JSON format.
 9. The JSON must contain three keys:
@@ -241,16 +241,15 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         route_type, current_next_agent, plan, error_count,
     )
 
-    # Ollama 네이티브 grammar-constrained decoding으로 JSON 스키마를 강제한다 —
-    # next_agent는 반드시 유효한 4개 값 중 하나, plan은 반드시 문자열 배열로만
-    # 나오게 되어(SupervisorDecision), 깨진 JSON이나 스키마 이탈 자체가 구조적으로
-    # 불가능해진다. 단, "그 값이 사용자 의도와 의미적으로 맞는가"는 스키마가
-    # 보장 못 하므로 아래 _infer_intended_agent 등 기존 안전장치는 그대로 둔다.
-    structured_llm = ChatOllama(
-        model="qwen2.5vl:7b",
+    # 로컬 모델 서버(app/model_server)에 JSON 스키마를 요청 시점에 함께 보낸다 —
+    # Ollama의 grammar-constrained decoding과 달리 이 서버는 prompt 주입 기반
+    # best-effort 준수만 보장한다(app/model_server/server.py 상단 주석 참고).
+    # 스키마 이탈은 parsing_error 로 아래에서 재시도 처리된다.
+    structured_llm = ChatOpenAI(
+        model=QWEN_VL_MODEL_NAME,
         temperature=0.0,
-        num_predict=300,
-        base_url=OLLAMA_BASE_URL,
+        max_tokens=300,
+        base_url=MODEL_SERVER_URL,
     ).with_structured_output(SupervisorDecision, method="json_schema", include_raw=True)
 
     # 첫 진입 시에만 experience 검색 (캐시 분기: run_graph 한 번에 재사용)
@@ -291,6 +290,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 - Previous Agent Hint: {current_next_agent}
 - Vector RAG Results: {vector_rag}
 - Graph RAG Results: {graph_rag}
+- Last Knowledge Result: {last_knowledge_result}
 - Vehicle State: {vehicle_state}
 - Retrieved Experience (past lessons): {retrieved_experience}
 - User Profile (preferences): {profile}
@@ -375,13 +375,26 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         next_agent = "__end__"
         new_plan = []
 
+    # 안전장치(perception과 동일한 원칙): last_knowledge_result 가 이미 채워져
+    # 있는데도 LLM 이 Rule 6("Last Knowledge Result 가 있으면 __end__")을 무시하고
+    # knowledge 를 다시 호출하려 하면 — 프롬프트만으로는 이 모델이 신뢰성 있게
+    # 안 따르는 게 실측으로 확인됨 — 코드 레벨에서 강제로 종료 처리한다.
+    if next_agent == "knowledge" and last_knowledge_result:
+        logger.warning(
+            "supervisor_node: Rule 6 위반 감지(knowledge 재호출 차단, last_knowledge_result=%r) "
+            "— __end__ 로 강제 전환",
+            last_knowledge_result,
+        )
+        next_agent = "__end__"
+        new_plan = []
+
     # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
     # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면
     # 무한루프 위험)라면 모델의 __end__ 판단을 신뢰하고 덮어쓰지 않는다.
     _agent_has_fresh_result = {
         "execution": bool(last_tool_call),
-        "knowledge": bool(vector_rag or graph_rag),
+        "knowledge": bool(last_knowledge_result or vector_rag or graph_rag),
         "perception": bool(vision_results),
     }
     if next_agent == "__end__":
