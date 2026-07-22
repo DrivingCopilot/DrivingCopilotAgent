@@ -66,7 +66,16 @@ _TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
 
 def _normalize_content_for_vl(content: Any) -> Any:
-    """OpenAI 스타일 content 블록(image_url)을 Qwen2-VL 프로세서 형태로 변환한다."""
+    """OpenAI 스타일 content 블록(image_url)을 Qwen2-VL 프로세서 형태로 변환한다.
+    tool_calls를 담은 assistant 메시지는 content=None으로 오므로 빈 문자열로
+    취급한다 — Qwen2-VL 채팅 템플릿은 content가 문자열이 아니면 무조건 순회
+    가능한 블록 리스트로 가정하고 for-loop을 돌리므로, None을 그대로 넘기면
+    'NoneType' object is not iterable 로 죽는다(_normalize_content_for_text와
+    동일한 이유 — supervisor는 항상 QWEN_VL_MODEL_NAME을 쓰고 대화 히스토리
+    전체(messages_to_send.extend(messages))를 함께 보내므로, knowledge의
+    ReAct 루프가 state["messages"]에 남긴 tool_calls 메시지가 여기로도 들어온다)."""
+    if content is None:
+        return ""
     if not isinstance(content, list):
         return content
     normalized = []
