@@ -12,7 +12,10 @@
 #   - response_format=json_object|json_schema (crag/supervisor) — prompt 주입 기반
 #     best-effort. Ollama의 grammar-constrained decoding과 동일한 보장은 없다.
 #   - tools/tool_choice (knowledge의 create_react_agent) — Qwen 표준
-#     <tool_call>{...}</tool_call> 블록을 OpenAI tool_calls 형식으로 파싱.
+#     <tool_call>{...}</tool_call> 블록을 OpenAI tool_calls 형식으로 파싱하고,
+#     다음 턴 요청에 실려 돌아오는 assistant tool_calls/tool 메시지는
+#     _normalize_message_for_text로 원형(템플릿이 읽는 형태)을 복원한다 —
+#     안 그러면 모델이 자신의 과거 tool 호출/결과를 못 보고 매 턴 재호출한다.
 #   - 멀티모달 image_url 콘텐츠 블록 (perception) — VL 모델 경로로 라우팅.
 #   - stream=true (reflect.py의 llm.astream()) — SSE chat.completion.chunk.
 #
@@ -76,12 +79,54 @@ def _normalize_content_for_vl(content: Any) -> Any:
 
 
 def _normalize_content_for_text(content: Any) -> str:
-    """텍스트 모델 경로 — content가 블록 리스트면 text 블록만 이어붙인다."""
+    """텍스트 모델 경로 — content가 블록 리스트면 text 블록만 이어붙인다.
+    tool_calls를 담은 assistant 메시지는 content=None으로 오므로 빈 문자열로
+    취급한다(str(None) == "None" 문자열이 그대로 들어가는 사고 방지)."""
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         return "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
     return str(content)
+
+
+def _normalize_tool_call_arguments(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    """OpenAI 왕복 규약은 function.arguments를 JSON 문자열로 담는다(_parse_tool_calls
+    참고). Qwen 채팅 템플릿은 `tool_call.arguments | tojson`으로 객체를 렌더링하므로,
+    문자열을 그대로 넘기면 따옴표로 한 번 더 감싸져(이중 인코딩) 모델이 자신이
+    과거에 만든 tool_call을 스스로 알아보지 못한다 — 여기서 dict로 되돌린다."""
+    function = dict(tool_call.get("function") or {})
+    raw_args = function.get("arguments", "{}")
+    if isinstance(raw_args, str):
+        try:
+            function["arguments"] = json.loads(raw_args) if raw_args else {}
+        except json.JSONDecodeError:
+            function["arguments"] = {}
+    return {**tool_call, "function": function}
+
+
+def _normalize_message_for_text(message: Dict[str, Any]) -> Dict[str, Any]:
+    """OpenAI 포맷 메시지를 텍스트 모델의 Qwen 채팅 템플릿이 기대하는 형태로
+    정규화한다. role/content만 남기고 재조립하면 assistant의 tool_calls와
+    tool 메시지가 사라져, ReAct 에이전트(knowledge_node)가 자신이 이미 tool을
+    호출·수신했다는 사실을 다음 턴에서 볼 수 없다 — 매 턴 같은 tool을 다시
+    호출하며 recursion_limit까지 수렴하지 못하는 원인이었다.
+    - assistant + tool_calls: content(falsy 허용) 그대로 유지, tool_calls는
+      arguments를 dict로 되돌려 템플릿의 이중 인코딩을 막는다.
+    - tool: content만 전달한다 — 템플릿은 tool_call_id/name을 쓰지 않고,
+      인접한 tool 메시지들을 role만으로 <tool_response> 블록에 함께 묶는다.
+    """
+    role = message.get("role", "user")
+    tool_calls = message.get("tool_calls")
+
+    if role == "assistant" and tool_calls:
+        return {
+            "role": "assistant",
+            "content": _normalize_content_for_text(message.get("content")),
+            "tool_calls": [_normalize_tool_call_arguments(tc) for tc in tool_calls],
+        }
+    return {"role": role, "content": _normalize_content_for_text(message.get("content"))}
 
 
 def _has_image(messages: List[Dict[str, Any]]) -> bool:
@@ -210,8 +255,7 @@ async def chat_completions(request: Request):
 
     # 텍스트 모델 경로 (tool-calling 지원)
     text_messages = _apply_response_format(
-        [{"role": m.get("role", "user"), "content": _normalize_content_for_text(m.get("content"))}
-         for m in messages],
+        [_normalize_message_for_text(m) for m in messages],
         response_format,
     )
     model = backend.get_text_model()

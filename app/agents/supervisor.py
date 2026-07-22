@@ -392,8 +392,12 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
     # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면
     # 무한루프 위험)라면 모델의 __end__ 판단을 신뢰하고 덮어쓰지 않는다.
+    # knowledge/perception도 execution과 동일하게 tool_calls에 append하므로
+    # (observe_node의 단일 관측 계약), last_tool_call이 있다는 사실만으로는
+    # "execution이 방금 실행됐다"를 보장하지 못한다 — tool_calls[-1]이 실제로
+    # execution 항목인지 이름으로 확인한다.
     _agent_has_fresh_result = {
-        "execution": bool(last_tool_call),
+        "execution": last_tool_call.get("tool") == "execution",
         "knowledge": bool(last_knowledge_result or vector_rag or graph_rag),
         "perception": bool(vision_results),
     }

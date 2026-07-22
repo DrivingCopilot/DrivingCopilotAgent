@@ -24,10 +24,12 @@ Mock 노드, 조건부 엣지, StateGraph 조립, 외부 호출 함수를 한 �
 
 from __future__ import annotations
 
+import json
 import logging
 from functools import lru_cache
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.supervisor import supervisor_node
@@ -48,6 +50,7 @@ from app.graph.a2a_nodes import (
     knowledge_a2a_node,
     perception_a2a_node,
 )
+from app.graph import ws as _ws
 from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -236,7 +239,21 @@ async def run_graph(user_message: str, route_type: str = "") -> AgentState:
     # supervisor 루프 + observe + reflect 에 더해, CRAG 는 knowledge 위임 1회당
     # grade_retrieval→(transform_query→knowledge→grade_retrieval)→refine 노드를
     # 추가하므로(위임당 최대 ~6 노드) 여유를 둔다.
-    result = await app.ainvoke(initial_state, config={"recursion_limit": 40})
+    try:
+        result = await app.ainvoke(initial_state, config={"recursion_limit": 40})
+    except GraphRecursionError:
+        # 정상적으로는 각 노드의 재시도/재호출 차단 가드(observe의 MAX_RETRY,
+        # supervisor의 perception/knowledge 재호출 차단 등)가 먼저 걸려야 하지만,
+        # 그 가드를 우회하는 루프가 생기면 여기서 최후 방어선으로 걸린다. 안
+        # 잡으면 websocket.py 바깥의 except가 done(reason="exception")만 보내고
+        # 사용자에게 보일 text는 전혀 안 나가 "응답 없음"으로 보인다.
+        logger.error("run_graph: recursion_limit 도달 — 강제 종료")
+        user_msg = "요청 처리가 예상보다 길어져 중단했습니다. 다시 시도해 주세요."
+        await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": user_msg}))
+        await _ws.websocket_manager.send_status(
+            json.dumps({"type": "done", "reason": "recursion_limit"})
+        )
+        result = {**initial_state, "messages": [AIMessage(content=user_msg)], "next_agent": "__end__"}
     logger.info("run_graph 완료")
 
     return result

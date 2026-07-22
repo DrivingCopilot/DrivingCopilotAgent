@@ -114,6 +114,11 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         context_data["last_knowledge_result"] = final_answer
         # refined_query 는 이번 재검색으로 소비됐으므로 초기화(빈 문자열=없음).
         context_data["refined_query"] = ""
+        # 이전 시도의 knowledge_failed=True 가 얕은 병합(merge_context)으로
+        # 남아있지 않도록 성공 시 명시적으로 False 로 되돌린다(CRAG 노드들이
+        # 이 플래그로 재작성/정제 LLM 호출을 건너뛰는 기준이므로, 낡은 True가
+        # 남으면 정상 검색 결과도 실패로 오인해 정제를 건너뛰게 된다).
+        context_data["knowledge_failed"] = False
 
         if is_reretrieval:
             # CRAG 재검색: 동일 스텝을 다시 검색한 것이므로 plan 을 재-pop 하지 않고,
@@ -132,29 +137,64 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             context_data["crag_attempts"] = 0
         
         await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge retrieval complete. Returning to Supervisor."}))
-        
+
         return {
             "messages": new_messages,
             "plan": new_plan,
             "context_data": context_data,
+            # execution.py와 동일한 계약으로 tool_calls에 append한다 — observe_node는
+            # tool_calls[-1]만 보고 성공/실패를 판정하는데, knowledge가 여기 아무것도
+            # 안 쓰면 observe가 몇 턴 전 다른 agent의 결과를 재관측하게 된다.
+            "tool_calls": [{
+                "tool": "knowledge",
+                "params": {"instruction": instruction_text},
+                "result": final_answer,
+                "status": "success",
+            }],
             "next_agent": "supervisor", # Always return control to supervisor
-            "error_count": state.get("error_count", {})
+            # error_count 반환 없음 — execution.py와 동일하게 observe_node가 단일
+            # 권위자다. 여기서 같이 건드리면 observe가 tool_calls로 다시 세면서
+            # 중복 카운트된다.
         }
         
     except Exception as e:
         logger.error(f"Error in Knowledge Agent Node: {e}")
-        error_count = state.get("error_count", {})
-        error_count["parameter"] = error_count.get("parameter", 0) + 1
-        
+
         await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"Knowledge agent failed: {str(e)[:50]}..."}))
-        
+
         return {
             "messages": [AIMessage(content=f"Knowledge Agent encountered an error: {e}")],
-            # 재검색 중 실패해도 refined_query 를 반드시 초기화한다 — 남겨두면 다음
-            # knowledge 위임이 낡은 refined_query 를 재검색으로 오인해 엉뚱한
-            # instruction 을 쓰고 plan 스텝 pop 을 건너뛴다.
-            "context_data": {"refined_query": ""},
+            "context_data": {
+                # 재검색 중 실패해도 refined_query 를 반드시 초기화한다 — 남겨두면
+                # 다음 knowledge 위임이 낡은 refined_query 를 재검색으로 오인해
+                # 엉뚱한 instruction 을 쓰고 plan 스텝 pop 을 건너뛴다.
+                "refined_query": "",
+                # 실패를 last_knowledge_result 에 명시적으로 기록한다 — 비워두면
+                # (a) 이번이 첫 knowledge 호출인 경우 supervisor 의 재호출 차단
+                # 가드(if next_agent=="knowledge" and last_knowledge_result)가
+                # 발동하지 않아 knowledge 가 계속 재위임되고, (b) 이전에 knowledge
+                # 가 성공한 적이 있으면 그 낡은 결과가 그대로 남아 이번 실패를
+                # 가리고 supervisor 가 무관한 답으로 턴을 종료한다.
+                "last_knowledge_result": f"[knowledge 실패] {e}",
+                # CRAG(grade_retrieval/route_after_grade/refine_knowledge)가 이
+                # 플래그를 보고 재작성·정제 LLM 호출을 생략하고 곧장 observe로
+                # 보낸다 — "검색 결과가 부실하다"는 CRAG의 전제 자체가 예외
+                # 상황(agent 실행 실패)에는 맞지 않는다(재검색해도 같은 예외가
+                # 다시 날 뿐이다).
+                "knowledge_failed": True,
+            },
+            "tool_calls": [{
+                "tool": "knowledge",
+                "params": {"instruction": instruction_text},
+                "result": str(e),
+                "status": "error",
+                "error_type": "parameter",
+                "error_msg": str(e),
+            }],
             "next_agent": "supervisor",
-            "error_count": error_count,
+            # error_count 반환 없음(성공 경로와 동일 이유) — observe_node가
+            # tool_calls를 보고 유일하게 카운트한다. 여기서 같이 올리면 이번 한
+            # 번의 실패가 observe 카운트 + 이 카운트로 중복 집계돼, MAX_RETRY
+            # 한도(parameter=2)를 첫 실패만으로 소진해버린다.
             "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}"
         }

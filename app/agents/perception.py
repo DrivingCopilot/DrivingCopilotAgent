@@ -145,6 +145,17 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
                 },
             },
             "plan": [],
+            # execution.py와 동일한 계약으로 tool_calls에 append한다 — observe_node는
+            # tool_calls[-1]만 보고 성공/실패를 판정하는데, perception이 여기 아무것도
+            # 안 쓰면 observe가 몇 턴 전 다른 agent의 결과를 재관측하게 된다.
+            "tool_calls": [{
+                "tool": "perception",
+                "params": {"camera_id": "front"},
+                "result": error_msg,
+                "status": "error",
+                "error_type": error_type or "parameter",
+                "error_msg": error_msg,
+            }],
         }
 
     # ── 2. Vision LLM 호출 ───────────────────────────────────────────────────
@@ -167,6 +178,17 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
                 },
             },
             "plan": [],
+            "tool_calls": [{
+                "tool": "perception",
+                "params": {"camera_id": "front"},
+                "result": str(exc),
+                "status": "error",
+                # observe.py의 MAX_RETRY 키(timeout/parameter/invalid_tool/sql)에
+                # "vlm"은 없다 — observe가 알아서 "parameter"로 폴백하지만, 여기서
+                # 명시적으로 넘겨 관측/로그의 일관성을 유지한다.
+                "error_type": "parameter",
+                "error_msg": str(exc),
+            }],
         }
 
     logger.debug("perception_node: VLM 원본 응답=%r", response.content)
@@ -191,4 +213,15 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
         # hazard 감지 시 execution agent 가 바로 실행할 plan (route_after_perception 참고).
         # 없으면 빈 리스트로 명시 — 이전에 perception 위임용으로 쓰였던 stale plan을 정리한다.
         "plan": plan_steps,
+        # hazard 유무와 무관하게 append한다 — hazard 없으면 observe로 바로 가서
+        # 이번 성공을 관측해야 하고(예전엔 여기서 안 써서 observe가 몇 턴 전
+        # 다른 agent의 stale 결과를 재관측했다), hazard 있으면 execution으로
+        # 직행하지만 execution이 뒤이어 자기 tool_calls를 또 append하므로 두
+        # 항목이 순서대로 남는 것도 이력상 자연스럽다.
+        "tool_calls": [{
+            "tool": "perception",
+            "params": {"camera_id": "front"},
+            "result": description,
+            "status": "success",
+        }],
     }
