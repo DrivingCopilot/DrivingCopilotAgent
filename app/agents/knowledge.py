@@ -62,11 +62,25 @@ Available Tools:
 2. graph_rag_search: Use for relational queries (e.g., "Engine warning light components and maintenance").
 3. text_to_sql_query: Use for database lookups (e.g., "Total mileage this month", "Recent DTC codes").
 
+IMPORTANT — Source of truth:
+- The tool results ARE excerpts parsed directly from this vehicle's own official owner's manual and
+  internal knowledge base (Vector RAG / Graph RAG indices are built from the manual itself). You DO
+  have direct access to this material through these tools — never claim you lack access to the
+  manual, internal documents, or manufacturer data, and never tell the user to check the manual
+  themselves or contact the manufacturer/customer service when a tool already returned relevant
+  content.
+- Base your final answer strictly on the tool results returned to you. Only if a tool result is
+  genuinely empty or irrelevant after reformulating the query should you say the information was not
+  found in the manual — do not fall back to a generic apology/disclaimer instead.
+
 Workflow:
 - Read the current plan and the user's request.
 - Decide which tool(s) are needed. You may need to call multiple tools if the query is complex (e.g., Context Fusion of Vector + Graph).
 - If the search result is poor, try reformulating the query (CRAG approach).
 - Synthesize the retrieved context into a clear, concise, and helpful response.
+
+IMPORTANT — Output language: Always write your FINAL answer to the user in Korean (한국어),
+regardless of the language of the retrieved tool results or your own intermediate reasoning.
 """
 
 async def knowledge_node(state: AgentState) -> Dict[str, Any]:
