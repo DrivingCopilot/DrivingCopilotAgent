@@ -111,6 +111,12 @@ async def chat_ws(ws: WebSocket) -> None:
                 await run_graph(query, route_type)
             except Exception:
                 logger.exception("graph run failed inside WS handler")
+                # done만 보내면 사용자는 완전 침묵을 겪는다(run_graph 내부의 모든
+                # try/except를 뚫고 여기까지 올라온 최후의 예외이므로, 노드 레벨
+                # 안전망이 전부 놓친 경우에 대한 마지막 방어선이다).
+                await streamer.send_status(
+                    json.dumps({"type": "text", "data": "요청 처리 중 예기치 못한 오류가 발생했습니다. 다시 시도해 주세요."})
+                )
                 await streamer.send_done(reason="exception")
             else:
                 await streamer.send_done()

@@ -178,9 +178,16 @@ You rely on Chain-of-Thought reasoning to make decisions.
 [Rules & Protocol]
 1. Use A2A delegation by selecting the appropriate agent from the list above.
 2. If the user's request requires understanding the physical environment (e.g. weather, road, obstacles, warning lights) AND 'Vision/Perception Results' below is EMPTY, delegate to 'perception'. Never delegate to 'perception' twice in a row — if it is already populated, you have your answer (see Rule 6).
-3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'.
+3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'. This
+   includes malfunction/trouble reports — a component mentioned in a NEGATIVE or "not working" phrasing
+   (e.g. Korean "안 돼"/"안 켜져"/"작동을 안 해"/"고장났어") is the user describing a PROBLEM, not
+   commanding an action — never translate the mentioned component into a positive control_* action.
+   Delegate these to 'knowledge' so the manual can be consulted for the cause/fix, unless the user goes
+   on to explicitly ask you to try actuating it.
    - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
-4. If the user requests an action or structured data retrieval, delegate to 'execution'. The "plan" MUST
+4. If the user requests an action or structured data retrieval, delegate to 'execution'. This rule is
+   ONLY for affirmative commands ("켜줘"/"꺼줘"/"열어줘"/"조회해줘" — turn on/off, open, query, etc.) —
+   never for malfunction reports (see Rule 3). The "plan" MUST
    name the EXACT MCP tool that literally matches the user's request, chosen from execution's MCP Tools
    list above — never substitute an unrelated tool just because it appears in the list. If the user's
    words map directly to a tool name (e.g. "wiper"/"와이퍼" -> control_wiper), use that tool. Do NOT default
@@ -190,6 +197,8 @@ You rely on Chain-of-Thought reasoning to make decisions.
    - User: "와이퍼 켜줘" -> plan: ["control_wiper on=true"], next_agent: "execution"
    - User: "에어컨 22도로 켜줘" -> plan: ["control_climate temperature=22 on=true"], next_agent: "execution"
    - User: "긴급 상황이야 신고해줘" -> plan: ["trigger_emergency kind=call"], next_agent: "execution"
+   - User: "와이퍼가 작동이 안 돼" -> this is a malfunction report, NOT a command to turn the wiper on
+     (Rule 3 applies instead) -> next_agent: "knowledge", never plan: ["control_wiper on=true"]
 5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
 6. If 'Vision/Perception Results', 'Last Tool Call Result', or 'Last Knowledge Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'. Never delegate to 'knowledge' again once 'Last Knowledge Result' is already populated for this request.
 7. If 'Vision/Perception Results' shows detected hazards (e.g. rain, tunnel, warning_light) AND 'Last Tool Call Result' shows a related action was already taken, explicitly mention BOTH the detected condition and the action taken in your summary — the action was triggered automatically by the Perception agent, not requested by the user.
@@ -251,7 +260,11 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     structured_llm = ChatOpenAI(
         model=QWEN_VL_MODEL_NAME,
         temperature=0.0,
-        max_tokens=300,
+        # max_tokens는 상한일 뿐(정상 응답은 EOS로 일찍 종료되므로 이 값을 올려도
+        # 짧은 응답의 지연은 늘지 않는다). 300은 너무 낮아 reasoning(자유 CoT)이
+        # 길어지면 JSON이 문자열 중간에서 잘려(EOF while parsing) 파싱이 예외로
+        # 터졌다 — 7B가 'brief' 지시를 자주 어기므로 넉넉히 잡아 truncation을 막는다.
+        max_tokens=1024,
         base_url=MODEL_SERVER_URL,
     ).with_structured_output(SupervisorDecision, method="json_schema", include_raw=True)
 
@@ -325,9 +338,35 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     try:
         llm_result = await structured_llm.ainvoke(messages_to_send)
     except Exception as e:
-        logger.error(f"supervisor_node 완료 (LLM 호출 예외): {e}")
-        await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error"}))
-        return {"next_agent": "__end__"}
+        # 잘린 JSON(EOF while parsing)이나 일시적 모델 서버 오류가 include_raw의
+        # parsing_error로 잡히지 못하고 예외로 올라오는 경우 — 즉시 포기하지 않고
+        # 아래 parsing_error 분기와 동일한 재시도 계약으로 처리한다(한도 내 재시도 후
+        # 한도 초과 시에만 사용자에게 실패 안내). 침묵 방지: 어느 경로든 done 전에
+        # 반드시 text를 먼저 보낸다.
+        logger.error(f"supervisor_node (LLM 호출 예외, 재시도 처리): {e}")
+        updated_error_count = dict(error_count)
+        updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
+        count = updated_error_count["parameter"]
+        limit = MAX_RETRY.get("parameter", 2)
+
+        if count >= limit:
+            logger.error(f"Supervisor LLM 호출 retry limit exceeded: {count}/{limit}")
+            user_msg = f"응답 생성에 {count}회 실패했습니다. 요청을 처리할 수 없습니다."
+            await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": user_msg}))
+            await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error_limit"}))
+            return {
+                "error_count": updated_error_count,
+                "feedback": f"Supervisor LLM call failed {count}/{limit} times: {e}",
+                "next_agent": "__end__",
+                "messages": [AIMessage(content=user_msg)],
+            }
+
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"응답 생성 재시도 중... ({count}/{limit})"}))
+        return {
+            "error_count": updated_error_count,
+            "feedback": f"Supervisor LLM call raised (attempt {count}/{limit}): {e}",
+            "next_agent": "supervisor",
+        }
 
     parsing_error = llm_result.get("parsing_error")
     if parsing_error is not None:
@@ -434,6 +473,14 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     elif next_agent == "__end__" and last_knowledge_result:
         final_text = last_knowledge_result
 
+    # 최후의 안전망: 위 우선순위 체인을 다 거치고도 final_text가 비어있는 채로
+    # (예: reasoning조차 빈 문자열) 턴이 끝나면, 아래 type:"text" 전송이 스킵되고
+    # done만 나가 사용자는 완전 침묵을 겪는다 — knowledge/model_server 쪽 원인을
+    # 막아도 다른 경로로 같은 증상이 재현될 수 있으므로 여기서 구조적으로 항상
+    # 텍스트가 나가도록 보장한다.
+    if next_agent == "__end__" and not final_text:
+        final_text = "요청을 처리했지만 표시할 결과가 없습니다."
+
     # frontend AG-UI 프로토콜: reasoning(사고 과정 accordion), plan(실행 계획 카드)을
     # 각각의 프레임으로 전달한다. WS로 나가는 plan은 라우팅에 쓰이는 new_plan과
     # 별개로 필터링한다 — route_next 등이 참조하는 반환값(new_plan)은 그대로 둔다.
@@ -447,9 +494,9 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
 
     if next_agent == "__end__":
         # 턴이 종료될 때만 최종 답변을 type:"text" 로 노출한다 — 진행 중인 위임
-        # 단계에서는 reasoning이 CoT일 뿐 사용자에게 보일 답변이 아니다.
-        if final_text:
-            await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": final_text}))
+        # 단계에서는 reasoning이 CoT일 뿐 사용자에게 보일 답변이 아니다. 위
+        # 안전망 덕분에 이 시점의 final_text는 항상 non-empty다.
+        await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": final_text}))
         await _ws.websocket_manager.send_status(json.dumps({"type": "done"}))
 
     logger.info(

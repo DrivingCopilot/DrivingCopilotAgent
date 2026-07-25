@@ -47,8 +47,9 @@ DB_PATH = os.getenv("VEHICLE_DB_PATH", "./data/vehicle_data.db")
 # (mcp_server.py: MCP_HOST/MCP_PORT 환경변수, 기본 http://{host}:{port}/mcp).
 MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 
-# MCP tool 호출 타임아웃 (초)
-MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
+# MCP tool 호출 타임아웃 (초). vector_rag_search(임베딩+Qdrant)가 ~9~10초로 기존
+# 10초 경계에 걸쳐 간헐적 타임아웃이 나 빈 검색 결과를 유발했다 — 여유를 둔다.
+MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "20.0"))
 
 # A2A 태스크(POST /tasks/send) 타임아웃 (초).
 # knowledge/execution/perception 노드는 내부에서 LLM/VLM 추론을 거치므로

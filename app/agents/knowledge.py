@@ -1,17 +1,32 @@
+import asyncio
 import json
 import logging
 import os
 from typing import Any, Dict, List
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME, QWEN_VL_MODEL_NAME
 from app.graph.state import AgentState
 from app.graph import ws as _ws
 from app.core.mcp_client import call_mcp_tool_once
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 모델별 역할 분담 (Knowledge 노드)
+# ---------------------------------------------------------------------------
+# 단순검색(ReAct tool-calling) / query 변환 / 요약 → 1.5B(QWEN_TEXT_MODEL_NAME).
+#   query 변환·요약은 crag.py(transform_query_node/refine_knowledge_node)가 이미
+#   QWEN_TEXT_MODEL_NAME으로 수행한다 — 여기서는 검색 단계만 담당한다.
+# 복잡한 Graph Context Fusion / CoT(다중 소스 관계 추론) → 7B(QWEN_VL_MODEL_NAME).
+#   주의: model_server의 VL 경로는 tool-calling을 지원하지 않으므로(tools 무시 +
+#   _strip_tool_messages_for_vl), 7B는 tool을 직접 부르지 않고 "이미 검색된"
+#   context를 받아 융합/추론하는 합성 단계에만 쓴다. 검색은 항상 1.5B가 한다.
+KNOWLEDGE_RETRIEVAL_MODEL = os.getenv("KNOWLEDGE_MODEL", QWEN_TEXT_MODEL_NAME)
+KNOWLEDGE_FUSION_MODEL = os.getenv("KNOWLEDGE_FUSION_MODEL", QWEN_VL_MODEL_NAME)
 
 
 async def _call_knowledge_tool(tool_name: str, params: Dict[str, Any]) -> str:
@@ -75,13 +90,223 @@ IMPORTANT — Source of truth:
 
 Workflow:
 - Read the current plan and the user's request.
+- You MUST call at least one retrieval tool before writing your final answer. Never answer directly
+  from your own parametric knowledge or refuse/redirect the user without first calling a tool — you
+  always have tools available for vehicle-manual questions, so an un-searched answer is never correct.
 - Decide which tool(s) are needed. You may need to call multiple tools if the query is complex (e.g., Context Fusion of Vector + Graph).
 - If the search result is poor, try reformulating the query (CRAG approach).
+- If a tool call returns an error or timeout message (e.g., text starting with "[tool_name 실패:" or "[tool_name failed:"),
+  do NOT treat that as "no information exists" — that is a transient tool failure, not an empty manual. Retry once,
+  or call a DIFFERENT tool that can answer the same question (e.g., if vector_rag_search fails, try graph_rag_search)
+  before concluding information was not found.
 - Synthesize the retrieved context into a clear, concise, and helpful response.
 
 IMPORTANT — Output language: Always write your FINAL answer to the user in Korean (한국어),
 regardless of the language of the retrieved tool results or your own intermediate reasoning.
 """
+
+
+# 7B(Graph Context Fusion / CoT)용 합성 프롬프트. tool 호출 없이, 이미 수집된
+# Graph RAG + Vector RAG context를 융합해 다중홉 추론으로 최종 답을 만든다.
+KNOWLEDGE_FUSION_PROMPT = """You are the Knowledge Fusion Reasoner (7B) in an on-device driving copilot.
+You are given knowledge that was ALREADY retrieved from this vehicle's own official owner's manual and
+knowledge graph (Graph RAG over Neo4j + Vector RAG). Your job is NOT to search — it is to FUSE the
+Graph and Vector context and reason over it, step by step (chain-of-thought), to produce one correct,
+grounded answer to the user's question.
+
+Rules:
+- The retrieved context IS the source of truth and IS from the manual — never say you lack access to
+  the manual or tell the user to contact the manufacturer when relevant context is present below.
+- Fuse Graph relations (e.g. "(운전석 에어백)-[:HAS_PART]-(에어백 시스템)") with Vector excerpts:
+  enumerate/relate the entities the graph exposes and ground them in the manual text.
+- Reason over multi-hop relations when the question needs it (types/components/causes/links).
+- If the context is genuinely empty or irrelevant, say in one line that the manual does not cover it —
+  do NOT produce a generic apology/disclaimer instead.
+
+Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
+
+
+# 관계형/다중홉(Graph Context Fusion·CoT)이 필요한 질의를 감지하는 휴리스틱 키워드.
+# supervisor Rule 3가 관계형 질의에 Graph RAG를 지시하는 것과 같은 취지 — 종류/구성/
+# 부품/원인/연동/차이 등을 묻거나 여러 소스를 엮어야 하는 질의는 7B 융합/추론으로 보낸다.
+_FUSION_KEYWORDS_KO = (
+    "종류", "구성", "부품", "관계", "원인", "연동", "차이", "목록", "리스트",
+    "어떤 것", "무엇이 있", "무엇이있", "어떤게 있", "얼마나", "구조", "연결", "포함",
+)
+_FUSION_KEYWORDS_EN = (
+    "type", "kind", "component", "relation", "cause", "difference", "list",
+    "what are", "which", "related", "structure", "consist", "include",
+)
+
+
+def _needs_graph_fusion(instruction: str, query: str, graph_present: bool) -> bool:
+    """이 질의가 7B Graph Fusion/CoT 경로가 필요한 '복잡한' 질의인지 판정한다.
+
+    - Graph RAG 관계 데이터가 실제로 수집됐으면(graph_present) 융합 대상이 있으므로 복잡으로 본다.
+    - 아니면 instruction/query에 관계형·열거형 지표 키워드가 있는지로 판정한다.
+    """
+    if graph_present:
+        return True
+    haystack = f"{instruction} {query}".lower()
+    if any(k in haystack for k in _FUSION_KEYWORDS_KO):
+        return True
+    return any(k in haystack for k in _FUSION_KEYWORDS_EN)
+
+
+def _extract_tool_context(new_messages: List[Any]) -> Dict[str, str]:
+    """ReAct 실행 중 호출된 tool들의 출력을 tool별로 모은다.
+
+    Returns: {"graph": "...", "vector": "...", "sql": "...", "all": "합쳐진 원문"}
+    tool이 하나도 안 불렸으면 all=""(빈 문자열).
+    """
+    buckets: Dict[str, List[str]] = {"graph": [], "vector": [], "sql": []}
+    for m in new_messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        name = (getattr(m, "name", "") or "").lower()
+        content = m.content if isinstance(m.content, str) else str(m.content)
+        # 에러/결과없음 출력은 grounding에 못 쓰므로 수집하지 않는다(graph_present
+        # 오인·garbage 융합 입력 방지).
+        if _is_unusable_result(content):
+            continue
+        if "graph" in name:
+            buckets["graph"].append(content)
+        elif "vector" in name:
+            buckets["vector"].append(content)
+        elif "sql" in name:
+            buckets["sql"].append(content)
+        else:
+            buckets["vector"].append(content)  # 미상 tool은 vector 취급
+    parts = []
+    for label, key in (("Graph RAG", "graph"), ("Vector RAG", "vector"), ("Text2SQL", "sql")):
+        if buckets[key]:
+            parts.append(f"[{label}]\n" + "\n".join(buckets[key]))
+    return {
+        "graph": "\n".join(buckets["graph"]),
+        "vector": "\n".join(buckets["vector"]),
+        "sql": "\n".join(buckets["sql"]),
+        "all": "\n\n".join(parts),
+    }
+
+
+def _is_tool_error_text(text: str) -> bool:
+    """_call_knowledge_tool이 돌려주는 실패 문자열('[tool 실패: ...]') 여부."""
+    t = (text or "").lstrip()
+    return t.startswith("[") and "실패:" in t[:40]
+
+
+# 백엔드 graph/vector 서비스가 '검색 결과 없음'을 알리는 문구들. 에러는 아니지만
+# grounding에 쓸 수 없는 내용이므로 빈 결과와 동일하게 취급해야 한다(안 그러면
+# graph_present=True로 오인해 7B 융합을 강제하고, 이 문장을 context로 흘려보낸다).
+_NO_RESULT_MARKERS = (
+    "찾지 못했습니다",
+    "검색할 엔티티가 없습니다",
+    "관련 정보를 찾을 수 없",
+    "결과가 없습니다",
+)
+
+
+def _is_no_result_text(text: str) -> bool:
+    t = text or ""
+    return any(m in t for m in _NO_RESULT_MARKERS)
+
+
+def _is_unusable_result(text: str) -> bool:
+    """grounding에 쓸 수 없는 tool 출력(에러 문자열 또는 '결과 없음' 문구)."""
+    t = (text or "").strip()
+    return (not t) or _is_tool_error_text(t) or _is_no_result_text(t)
+
+
+# 한국어 조사/어미(엔티티 뒤에 붙어 graph substring 매칭을 깨뜨리는 접미사). 긴 것부터
+# 매칭해 최장 접미사를 우선 제거한다.
+_KO_JOSA = (
+    "으로서", "으로써", "이라고", "이란", "으로", "에서", "에게", "한테", "께서",
+    "까지", "부터", "보다", "처럼", "같이", "라도", "이나", "이든", "든지", "마다",
+    "조차", "밖에", "뿐", "이랑", "랑", "과", "와", "을", "를", "이", "가", "은",
+    "는", "의", "에", "도", "만", "로", "나", "야",
+)
+
+# 질의에서 엔티티가 아닌 의문사·서술어·기능어. 엔티티 추출 시 제거한다.
+_KO_STOPWORDS = frozenset({
+    "어떻게", "어떡해", "무엇", "무엇이", "뭐", "뭐야", "뭔데", "왜", "언제", "어디",
+    "어디서", "어디에", "얼마나", "몇", "해", "해줘", "해야", "하면", "되", "돼",
+    "있어", "없어", "인가", "인지", "좋아", "알려줘", "대해", "관해", "경우", "및",
+    "수", "때", "그", "이", "저", "것", "거", "좀", "다시", "또", "안", "못",
+})
+
+
+def _extract_query_terms(query: str) -> List[str]:
+    """자연어 질의에서 graph 매칭용 엔티티 후보를 뽑는다.
+
+    백엔드 graph_rag는 entities 미지정 시 query.split()(조사 포함)을 그대로 substring
+    매칭에 써서 '선루프가'/'뒷좌석을'/'hud가'처럼 조사가 붙어 엔티티명과 안 맞는다.
+    여기서 구두점·조사·의문사를 제거한 깨끗한 term을 만들어 entities로 넘긴다.
+    """
+    terms: List[str] = []
+    for raw in (query or "").split():
+        tok = raw.strip().strip("?？!！.,·…‘’\"'()[]{}")
+        if not tok or tok in _KO_STOPWORDS:
+            continue
+        stem = tok
+        for josa in _KO_JOSA:  # 조사가 붙어 있고 어간이 2자 이상이면 제거
+            if stem.endswith(josa) and len(stem) - len(josa) >= 2:
+                stem = stem[: -len(josa)]
+                break
+        if len(stem) < 2 or stem in _KO_STOPWORDS:
+            stem = tok  # 과도한 절단 방지: 어간이 너무 짧으면 원형 유지
+        if len(stem) >= 2 and stem not in terms:
+            terms.append(stem)
+    return terms
+
+
+def _is_prompt_echo(text: str) -> bool:
+    """7B(VL) 융합 모델이 답변 대신 입력 프롬프트 템플릿을 그대로 되뱉은 경우.
+    _fuse_with_7b가 보내는 HumanMessage의 고정 마커('[User Query]'/'[Retrieved
+    Context]')가 출력에 그대로 나타나면 echo로 본다 — 정상 답변에는 나올 수 없는
+    문자열이다. 이 echo가 malformed 가드를 통과하면 사용자에게 프롬프트가 노출된다."""
+    t = text or ""
+    if "[Retrieved Context]" in t:
+        return True
+    return t.lstrip().startswith("[User Query]")
+
+
+async def _deterministic_retrieve(query: str) -> Dict[str, str]:
+    """1.5B ReAct가 tool을 한 번도 안 부른 경우의 안전망 — graph/vector를 직접 호출해
+    grounding을 보장한다(에어백 오답처럼 검색 없이 hallucination하는 것을 차단).
+
+    - graph는 질의에서 뽑은 깨끗한 엔티티를 넘겨 매칭률을 높인다(조사 제거).
+    - graph/vector를 병렬 호출해 지연을 max(둘)로 줄인다(순차 합산 아님).
+    - 에러/결과없음은 빈 결과로 정규화해 garbage가 융합 입력으로 새지 않게 한다.
+    """
+    entities = _extract_query_terms(query)
+    graph, vector = await asyncio.gather(
+        _call_knowledge_tool("graph_rag_search", {"query": query, "entities": entities}),
+        _call_knowledge_tool("vector_rag_search", {"query": query}),
+    )
+    graph = "" if _is_unusable_result(graph) else graph
+    vector = "" if _is_unusable_result(vector) else vector
+    parts = []
+    if graph:
+        parts.append(f"[Graph RAG]\n{graph}")
+    if vector:
+        parts.append(f"[Vector RAG]\n{vector}")
+    return {"graph": graph, "vector": vector, "sql": "", "all": "\n\n".join(parts)}
+
+
+async def _fuse_with_7b(query: str, context_text: str) -> str:
+    """7B(QWEN_VL)로 Graph Context Fusion + CoT 합성. tool 미사용(VL 경로는 텍스트 생성)."""
+    llm = ChatOpenAI(
+        model=KNOWLEDGE_FUSION_MODEL,
+        temperature=0.2,
+        max_tokens=768,
+        base_url=MODEL_SERVER_URL,
+    )
+    response = await llm.ainvoke([
+        SystemMessage(content=KNOWLEDGE_FUSION_PROMPT),
+        HumanMessage(content=f"[User Query]\n{query}\n\n[Retrieved Context]\n{context_text}"),
+    ])
+    return (response.content or "").strip()
+
 
 async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent retrieving context..."}))
@@ -106,24 +331,82 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
 
     instruction_msg = HumanMessage(content=f"[Supervisor Instruction] {instruction_text}")
     
-    # 2. Setup LLM & Tools (G1: Executor uses Qwen2.5 1.5B)
-    llm = ChatOpenAI(model=QWEN_TEXT_MODEL_NAME, temperature=0.1, base_url=MODEL_SERVER_URL)
+    # 검색 대상 쿼리 — 재검색이면 refined_query, 아니면 plan 스텝/사용자 쿼리.
+    user_query = next(
+        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+    )
+    retrieval_query = refined_query or (plan[0] if plan else user_query)
+
+    # 2. 검색 단계 (1.5B, 단순검색) — ReAct 루프로 tool을 호출해 raw context를 모은다.
+    llm = ChatOpenAI(model=KNOWLEDGE_RETRIEVAL_MODEL, temperature=0.1, base_url=MODEL_SERVER_URL)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
-    
+
     agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
-    
+
     messages_to_pass = messages + [instruction_msg]
-    
+
     try:
         # 3. Invoke the ReAct Agent
         response = await agent.ainvoke({"messages": messages_to_pass})
-        
+
         # Extract new messages generated by the Knowledge Agent
         new_messages = response["messages"][len(messages_to_pass):]
-        
-        # Extract the final answer (the last AI message)
-        final_answer = new_messages[-1].content if new_messages else "Knowledge retrieval completed."
-        
+
+        # 검색 단계에서 1.5B ReAct가 실제로 호출한 tool 출력을 모은다.
+        tool_ctx = _extract_tool_context(new_messages)
+        react_grounded = bool(tool_ctx["all"])  # 1.5B가 스스로 검색했는가
+
+        # 1.5B가 tool을 한 번도 안 부른 경우(에어백 오답처럼 검색 없이 hallucination)
+        # — 결정적으로 graph/vector를 직접 호출해 grounding을 보장한다(안전망).
+        if not react_grounded:
+            logger.info("knowledge: ReAct가 tool 미호출 — 결정적 검색 폴백(graph+vector) 실행")
+            tool_ctx = await _deterministic_retrieve(retrieval_query)
+
+        react_answer = new_messages[-1].content if new_messages else ""
+        has_context = bool(tool_ctx["all"])
+
+        # 검색이 전부 실패/무결과라 grounding할 근거가 하나도 없으면 — 1.5B의
+        # 미검증 답변(환각)을 사용자에게 내보내지 않고, garbage를 7B에 융합시키지도
+        # 않는다. 명시적 실패로 raise → CRAG(transform 재검색)/observe가 처리한다.
+        if not has_context:
+            raise ValueError("Knowledge retrieval returned no usable context (graph/vector both empty)")
+
+        # 4. 합성 단계 — 관계형/다중홉(graph 근거 존재)은 7B Graph Fusion/CoT로,
+        #    단순 질의는 1.5B가 직접 검색·요약한 답을 그대로 쓴다.
+        graph_present = bool(tool_ctx.get("graph"))
+        is_complex = _needs_graph_fusion(instruction_text, user_query, graph_present)
+
+        if is_complex:
+            await _ws.websocket_manager.send_status(
+                json.dumps({"type": "status", "data": "Fusing graph+vector context (7B CoT)..."})
+            )
+            final_answer = await _fuse_with_7b(retrieval_query or user_query, tool_ctx["all"])
+            # 7B 합성이 비거나, <tool_call>이 새거나, 입력 프롬프트를 그대로 echo하면
+            # 부실로 보고 1.5B ReAct 답변으로 폴백(단, grounded된 경우에만).
+            if (not final_answer or not final_answer.strip()
+                    or "<tool_call>" in final_answer or _is_prompt_echo(final_answer)):
+                logger.warning("knowledge: 7B 융합 결과가 부실(빈값/tool_call/프롬프트 echo) — 폴백")
+                final_answer = react_answer if react_grounded else ""
+        elif react_grounded and react_answer and not _is_tool_error_text(react_answer):
+            # 단순 검색: 1.5B가 직접 검색+요약한 답을 그대로 사용.
+            final_answer = react_answer
+        else:
+            # context는 있으나 1.5B가 직접 검색 안 함(폴백) → react_answer는 미근거이므로
+            # 검색된 context를 1.5B가 아닌 7B로 요약해 grounding한다.
+            await _ws.websocket_manager.send_status(
+                json.dumps({"type": "status", "data": "Summarizing retrieved context..."})
+            )
+            final_answer = await _fuse_with_7b(retrieval_query or user_query, tool_ctx["all"])
+
+        # 답변이 비었거나 <tool_call> 태그가 노출됐거나 입력 프롬프트를 그대로
+        # echo한 경우 — 조용히 "성공"으로 넘기면 observe/CRAG의 실패 감지를 모두
+        # 통과해 사용자에게 무응답/프롬프트 노출로 이어진다. 명시적 실패로 raise한다.
+        if (not final_answer or not final_answer.strip()
+                or "<tool_call>" in final_answer or _is_prompt_echo(final_answer)):
+            raise ValueError(
+                f"Knowledge agent produced an empty or malformed final answer: {final_answer!r}"
+            )
+
         # Context data update (accumulate findings)
         context_data["last_knowledge_result"] = final_answer
         # refined_query 는 이번 재검색으로 소비됐으므로 초기화(빈 문자열=없음).
@@ -143,9 +426,6 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             # grade_retrieval/transform_query 가 "실제로 실행된 쿼리"를 평가하도록
             # crag_query 를 기록한다 — pop 이후 plan[0] 이 다음 스텝으로 바뀌어
             # grader 가 엉뚱한 스텝을 평가하는 문제를 막는다.
-            user_query = next(
-                (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
-            )
             context_data["crag_query"] = plan[0] if plan else user_query
             new_plan = plan[1:] if plan else []
             context_data["crag_attempts"] = 0

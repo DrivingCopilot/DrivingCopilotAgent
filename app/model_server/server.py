@@ -65,6 +65,27 @@ async def health():
 _TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
 
+def _strip_tool_messages_for_vl(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """VL(Qwen2-VL) 채팅 템플릿은 tool-calling용으로 설계되지 않았다 — 텍스트 모델 경로의
+    _normalize_message_for_text와 달리 tool_calls/tool 메시지 구조를 지원한다는 보장이
+    없다. supervisor는 항상 이 VL 경로를 쓰면서 전체 대화 히스토리를 그대로 보내므로,
+    knowledge_node의 ReAct 루프가 state["messages"]에 남긴 tool_calls 딸린 assistant
+    메시지와 그 결과 tool 메시지가 그대로 섞여 들어온다 — 템플릿이 예상 못한 구조를 만나
+    죽으면(content=None 정규화 누락과 같은 계열) supervisor의 LLM 호출 자체가 예외로
+    실패해 사용자에게 아무 응답도 못 가는 원인이 된다. supervisor는 이미 context_data
+    (Last Knowledge Result 등)로 distilled 결과를 받으므로, 원본 ReAct 플러밍 메시지는
+    VL 요청에서 제거해도 정보 손실이 없다."""
+    filtered = []
+    for m in messages:
+        role = m.get("role", "user")
+        if role == "tool":
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            continue
+        filtered.append(m)
+    return filtered
+
+
 def _normalize_content_for_vl(content: Any) -> Any:
     """OpenAI 스타일 content 블록(image_url)을 Qwen2-VL 프로세서 형태로 변환한다.
     tool_calls를 담은 assistant 메시지는 content=None으로 오므로 빈 문자열로
@@ -245,7 +266,7 @@ async def chat_completions(request: Request):
     if is_vl:
         vl_messages = _apply_response_format(
             [{"role": m.get("role", "user"), "content": _normalize_content_for_vl(m.get("content"))}
-             for m in messages],
+             for m in _strip_tool_messages_for_vl(messages)],
             response_format,
         )
         model = backend.get_vl_model()
@@ -280,7 +301,19 @@ async def chat_completions(request: Request):
 
     raw = model.generate(text_messages, tools=tools, max_new_tokens=max_tokens, temperature=temperature)
     tool_calls = _parse_tool_calls(raw) if tools else None
-    content = None if tool_calls else _strip_tool_call_blocks(raw)
+    if tools and tool_calls is None and _TOOL_CALL_RE.search(raw):
+        # 모델이 <tool_call> 태그는 냈지만 안의 JSON이 깨져 하나도 파싱되지 못한
+        # 경우(_parse_tool_calls가 매치는 있어도 전부 실패하면 None을 반환해
+        # "태그 자체가 없던 경우"와 구분이 안 된다). 이때 그대로
+        # _strip_tool_call_blocks를 적용하면 모델 출력 전체가 그 깨진 태그뿐이었던
+        # 경우 content가 통째로 빈 문자열이 되어 "tool 호출 없이 정상적으로 답변
+        # 없이 종료"처럼 보인다 — knowledge_node의 ReAct 루프가 이를 성공한
+        # 최종 답변으로 오인해(빈 문자열도 유효한 답변으로 채택) 사용자에게 조용히
+        # 무응답을 전달하는 원인이었다. 파싱 실패 시엔 strip하지 않고 원본을 그대로
+        # 남겨 최소한 빈 문자열이 되지 않게 한다.
+        content = raw.strip()
+    else:
+        content = None if tool_calls else _strip_tool_call_blocks(raw)
     return JSONResponse(_completion_payload(model_name, content, tool_calls))
 
 
