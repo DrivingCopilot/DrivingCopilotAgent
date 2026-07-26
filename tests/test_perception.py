@@ -18,12 +18,13 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langchain_core.messages import HumanMessage
 
 
-def _make_state(context_data: dict | None = None) -> Dict[str, Any]:
+def _make_state(context_data: dict | None = None, messages: list | None = None) -> Dict[str, Any]:
     """테스트용 최소 AgentState 생성."""
     return {
-        "messages": [],
+        "messages": messages or [],
         "route_type": "vision",
         "plan": [],
         "next_agent": "perception",
@@ -194,6 +195,8 @@ class TestPerceptionNode:
         vision_results = result["context_data"]["vision_results"]
         assert vision_results["description"] == "비가 내리고 도로가 젖어있습니다."
         assert vision_results["hazards"] == []
+        assert vision_results["answer"] == ""
+        assert vision_results["related_hazard"] is None
         assert result["plan"] == []
 
     async def test_unknown_hazard_value_is_filtered_out(self):
@@ -256,6 +259,82 @@ class TestPerceptionNode:
         assert "tool_result" in types
         assert "status" in types
 
+    async def test_user_question_included_in_vision_prompt(self):
+        """messages의 최신 HumanMessage가 VLM 프롬프트에 실제로 포함되어야 한다."""
+        mock_response = MagicMock()
+        mock_response.content = (
+            '{"description": "표지판이 보입니다.", "hazards": [], '
+            '"related_hazard": null, "answer": "전방 표지판은 속도제한 50입니다."}'
+        )
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            patch("app.agents.perception._VISION_LLM", new=mock_llm),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            state = _make_state(messages=[HumanMessage(content="전방 경고 표시판이 뭐야?")])
+            result = await perception_node(state)
+
+        sent_messages = mock_llm.ainvoke.call_args[0][0]
+        sent_text = sent_messages[0].content[0]["text"]
+        assert "전방 경고 표시판이 뭐야?" in sent_text
+
+        vision_results = result["context_data"]["vision_results"]
+        assert vision_results["answer"] == "전방 표지판은 속도제한 50입니다."
+        assert vision_results["related_hazard"] is None
+
+    async def test_related_hazard_confirms_detected_hazard(self):
+        """VLM이 related_hazard를 rain으로 판단하면 vision_results에 그대로 반영된다."""
+        vision_json = (
+            '{"description": "비가 내리고 있습니다.", "hazards": ["rain"], '
+            '"related_hazard": "rain", "answer": "네, 비가 옵니다."}'
+        )
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm(vision_json),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            state = _make_state(messages=[HumanMessage(content="지금 비와?")])
+            result = await perception_node(state)
+
+        vision_results = result["context_data"]["vision_results"]
+        assert vision_results["related_hazard"] == "rain"
+        assert vision_results["answer"] == "네, 비가 옵니다."
+
+    async def test_no_question_answer_and_related_hazard_default_empty(self):
+        """messages에 질문이 없으면(자동 트리거 등) answer/related_hazard는 빈 값으로 폴백한다."""
+        vision_json = '{"description": "맑은 날씨입니다.", "hazards": []}'
+        with (
+            patch(
+                "app.agents.perception.call_mcp_tool_once",
+                new_callable=AsyncMock,
+                return_value=("base64FRAME==", "success", "", ""),
+            ),
+            _mock_vision_llm(vision_json),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.perception import perception_node
+
+            result = await perception_node(_make_state())
+
+        vision_results = result["context_data"]["vision_results"]
+        assert vision_results["answer"] == ""
+        assert vision_results["related_hazard"] is None
+
 
 class TestSanityCheckHazards:
     """description과 hazards가 모순될 때 _sanity_check_hazards가 걸러내는지 검증."""
@@ -274,3 +353,50 @@ class TestSanityCheckHazards:
         from app.agents.perception import _sanity_check_hazards
 
         assert _sanity_check_hazards("맑고 화창합니다.", ["tunnel"]) == ["tunnel"]
+
+
+class TestBuildVisionPrompt:
+    def test_includes_user_question_when_present(self):
+        from app.agents.perception import _build_vision_prompt
+
+        assert "전방 경고 표시판이 뭐야?" in _build_vision_prompt("전방 경고 표시판이 뭐야?")
+
+    def test_omits_question_section_when_absent(self):
+        from app.agents.perception import _build_vision_prompt
+
+        assert "운전자가 다음과 같이 질문했습니다" not in _build_vision_prompt("")
+
+
+class TestParseVisionResponse:
+    def test_parses_answer_and_related_hazard_fields(self):
+        from app.agents.perception import _parse_vision_response
+
+        result = _parse_vision_response(
+            '{"description": "맑음", "hazards": [], '
+            '"related_hazard": null, "answer": "표지판은 A입니다."}'
+        )
+        assert result.answer == "표지판은 A입니다."
+        assert result.related_hazard is None
+
+    def test_missing_fields_default_to_empty(self):
+        from app.agents.perception import _parse_vision_response
+
+        result = _parse_vision_response('{"description": "맑음", "hazards": []}')
+        assert result.answer == ""
+        assert result.related_hazard is None
+
+    def test_unknown_related_hazard_value_is_filtered_to_none(self):
+        from app.agents.perception import _parse_vision_response
+
+        result = _parse_vision_response(
+            '{"description": "안개", "hazards": [], "related_hazard": "fog"}'
+        )
+        assert result.related_hazard is None
+
+    def test_non_json_fallback_returns_empty_answer(self):
+        from app.agents.perception import _parse_vision_response
+
+        result = _parse_vision_response("자유 텍스트 응답")
+        assert result.answer == ""
+        assert result.description == "자유 텍스트 응답"
+        assert result.hazards == []

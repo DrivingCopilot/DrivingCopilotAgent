@@ -28,9 +28,12 @@ def _make_state(
     context_data: dict | None = None,
     next_agent: str = "",
     user_query: str = "",
+    messages: list | None = None,
 ) -> Dict[str, Any]:
+    if messages is None:
+        messages = [HumanMessage(content=user_query)] if user_query else []
     return {
-        "messages": [HumanMessage(content=user_query)] if user_query else [],
+        "messages": messages,
         "route_type": "vision",
         "plan": [],
         "next_agent": next_agent,
@@ -82,6 +85,7 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
+                    "related_hazard": "rain",
                 }
             },
             next_agent="perception",
@@ -147,6 +151,7 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "비가 내리고 있습니다.",
                     "hazards": ["rain"],
+                    "related_hazard": "rain",
                 }
             },
             next_agent="perception",
@@ -187,6 +192,7 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
+                    "related_hazard": "rain",
                 }
             },
             next_agent="perception",
@@ -295,6 +301,82 @@ class TestComposeToolResultSummary:
         assert "temperature 값이 범위를 벗어났습니다." in summary
 
 
+class TestComposeVisionSummary:
+    """
+    vision_results로부터 최종 답변을 구성하는 _compose_vision_summary 검증.
+    related_hazard는 perception.py의 VLM이 이미지+질문을 보고 직접 판단해
+    vision_results에 채워 넣는 값이라, 여기서는 텍스트 키워드 매칭 없이 그
+    값을 그대로 신뢰해야 한다.
+    """
+
+    def test_related_hazard_present_and_detected_confirms_yes(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "description": "비가 내리고 있습니다.",
+            "hazards": ["rain"],
+            "related_hazard": "rain",
+        }
+        result = _compose_vision_summary(vision_results)
+        assert "네" in result
+        assert "비" in result
+
+    def test_related_hazard_present_but_not_detected_confirms_no(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "description": "맑은 날씨입니다.",
+            "hazards": [],
+            "related_hazard": "rain",
+        }
+        result = _compose_vision_summary(vision_results)
+        assert "아니요" in result
+        assert "비" in result
+
+    def test_no_related_hazard_uses_vlm_answer(self):
+        """3종 hazard 어휘 밖의 질문(예: 도로 표지판)은 VLM이 직접 작성한 answer를 그대로 쓴다."""
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "description": "도로에 속도제한 50 표지판이 보입니다.",
+            "hazards": [],
+            "related_hazard": None,
+            "answer": "전방 표지판은 속도제한 50 표지판입니다.",
+        }
+        result = _compose_vision_summary(vision_results)
+        assert result == "전방 표지판은 속도제한 50 표지판입니다."
+
+    def test_no_related_hazard_and_no_answer_falls_back_to_hazard_summary(self):
+        """answer가 없는(구버전 vision_results 등) 경우 기존 hazard 통보 fallback으로 떨어진다."""
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "description": "터널 안입니다.",
+            "hazards": ["tunnel"],
+        }
+        result = _compose_vision_summary(vision_results)
+        assert "터널" in result
+        assert "감지되었습니다" in result
+
+    def test_no_hazard_no_answer_reports_no_risk(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {"status": "success", "description": "맑음", "hazards": []}
+        result = _compose_vision_summary(vision_results)
+        assert "감지되지 않았습니다" in result
+
+    def test_failure_status_reports_error(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {"status": "fail", "error_msg": "카메라 타임아웃"}
+        result = _compose_vision_summary(vision_results)
+        assert "카메라 타임아웃" in result
+
+
 class TestFilterInternalPlanSteps:
     """plan 배열에서 LangGraph 내부 라우팅 예약어를 걸러내는 _filter_internal_plan_steps 검증."""
 
@@ -341,3 +423,45 @@ class TestSupervisorFinalTextPriority:
         final_text = result["messages"][0].content
         assert final_text == "와이퍼를 켰습니다."
         assert final_text != llm_payload["reasoning"]
+
+    async def test_vision_summary_ignores_stale_messages_in_multiturn(self):
+        """
+        회귀 테스트: final_text 조립이 messages[0](윈도우에서 가장 오래된 메시지)이
+        아니라 vision_results.answer를 그대로 써야 한다 — 이전엔 messages[0].content를
+        읽어 멀티턴에서 몇 턴 전 메시지를 기준으로 답을 만드는 버그가 있었다.
+        """
+        llm_payload = {"reasoning": "answering from vision results", "plan": [], "next_agent": "__end__"}
+        state = _make_state(
+            context_data={
+                "vision_results": {
+                    "status": "success",
+                    "description": "도로에 속도제한 50 표지판이 보입니다.",
+                    "hazards": [],
+                    "related_hazard": None,
+                    "answer": "전방 표지판은 속도제한 50 표지판입니다.",
+                }
+            },
+            next_agent="perception",
+            messages=[
+                HumanMessage(content="와이퍼 켜줘"),
+                AIMessage(content="와이퍼를 켰습니다."),
+                HumanMessage(content="전방 경고 표시판이 뭐야?"),
+            ],
+        )
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        final_text = result["messages"][0].content
+        assert final_text == "전방 표지판은 속도제한 50 표지판입니다."
+        assert "와이퍼" not in final_text

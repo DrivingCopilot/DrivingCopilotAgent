@@ -22,10 +22,11 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.core.config import PERCEPTION_VLM_BASE_URL, PERCEPTION_VLM_MODEL
 from app.core.json_utils import extract_first_json_object
@@ -34,14 +35,6 @@ from app.graph import ws as _ws
 from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
-
-_VISION_PROMPT = (
-    "당신은 차량 카메라 영상을 분석하는 비전 어시스턴트입니다. "
-    "이 영상에서 날씨, 도로 상태, 위험 상황(보행자, 장애물, 경고등 등)을 분석하세요.\n\n"
-    "다음 JSON 형식으로만 답하세요(다른 텍스트 없이):\n"
-    '{"description": "<한국어로 간결한 설명>", "hazards": [<감지된 항목, '
-    '"rain"|"tunnel"|"warning_light" 중에서만 선택. 없으면 빈 배열>]}'
-)
 
 # hazard → execution agent 가 수행할 plan step. execution._extract_tool_call 이
 # 이 문자열을 보고 MCP tool/파라미터를 추출하므로, execution.py의 _TOOL_SIGNATURES
@@ -52,21 +45,76 @@ HAZARD_PLAN_STEPS: Dict[str, str] = {
     "warning_light": "경고등이 감지되었습니다. 대시보드 경고등 상태를 조회하세요. (query_dashboard metric=warning_lights)",
 }
 
+_KNOWN_HAZARDS = tuple(HAZARD_PLAN_STEPS.keys())
 
-def _parse_vision_response(raw: str) -> Tuple[str, List[str]]:
+
+class PerceptionVisionResult(BaseModel):
     """
-    Vision LLM 응답에서 description/hazards 를 추출한다.
-    구조화 JSON 파싱에 실패하면 원본 텍스트를 description으로, hazards는 빈
-    리스트로 폴백한다 (기존 자유 텍스트 응답과의 하위호환).
+    Vision LLM의 JSON 응답을 검증한다. hazards/related_hazard는 프롬프트로만
+    강제되므로(백엔드가 Ollama든 Colab HF-transformers 서버든 동일하게 동작해야
+    해 grammar-constrained decoding은 쓰지 않음), 모델이 어휘 밖의 값을 내도
+    예외 대신 조용히 걸러내도록 validator로 검증한다.
+    """
+
+    description: str = ""
+    hazards: List[str] = []
+    related_hazard: Optional[str] = None
+    answer: str = ""
+
+    @field_validator("hazards")
+    @classmethod
+    def _filter_unknown_hazards(cls, v: List[str]) -> List[str]:
+        return [h for h in v if h in _KNOWN_HAZARDS]
+
+    @field_validator("related_hazard")
+    @classmethod
+    def _validate_related_hazard(cls, v: Optional[str]) -> Optional[str]:
+        return v if v in _KNOWN_HAZARDS else None
+
+
+def _build_vision_prompt(user_question: str) -> str:
+    """
+    Vision LLM 프롬프트를 조립한다. 사용자 질문이 있으면 그 질문을 실제로 VLM에
+    전달하고, 3종 hazard 어휘(rain/tunnel/warning_light) 중 하나에 대한 질문인지
+    VLM 스스로 판단(related_hazard)하게 한다 — supervisor.py가 사용자 질문 텍스트를
+    별도로 키워드 매칭하지 않도록 하기 위함.
+    """
+    base = (
+        "당신은 차량 카메라 영상을 분석하는 비전 어시스턴트입니다. "
+        "이 영상에서 날씨, 도로 상태, 위험 상황(보행자, 장애물, 경고등 등)을 분석하세요.\n\n"
+    )
+    question_part = (
+        f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n'
+        "이 질문이 rain(비)/tunnel(터널)/warning_light(대시보드 경고등) 중 하나에 "
+        "대한 것이면 related_hazard에 그 값을, 아니면 null을 넣으세요. "
+        "질문 내용과 무관하게 영상을 근거로 answer 필드에 직접 답변하세요.\n\n"
+        if user_question else ""
+    )
+    schema_part = (
+        "다음 JSON 형식으로만 답하세요(다른 텍스트 없이):\n"
+        '{"description": "<한국어로 간결한 설명>", '
+        '"hazards": [<감지된 항목, "rain"|"tunnel"|"warning_light" 중에서만 선택. 없으면 빈 배열>], '
+        '"related_hazard": <"rain"|"tunnel"|"warning_light"|null>, '
+        '"answer": "<운전자 질문에 대한 한국어 직접 답변. 질문이 없으면 빈 문자열>"}'
+    )
+    return base + question_part + schema_part
+
+
+def _parse_vision_response(raw: str) -> PerceptionVisionResult:
+    """
+    Vision LLM 응답에서 description/hazards/related_hazard/answer 를 추출한다.
+    구조화 JSON 파싱/검증에 실패하면 원본 텍스트를 description으로, 나머지는
+    빈 값으로 폴백한다 (기존 자유 텍스트 응답과의 하위호환).
     """
     try:
         parsed = json.loads(extract_first_json_object(raw.strip()))
-        description = parsed.get("description") or raw
-        hazards = [h for h in parsed.get("hazards", []) if h in HAZARD_PLAN_STEPS]
-        hazards = _sanity_check_hazards(description, hazards)
-        return description, hazards
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        return raw, []
+        result = PerceptionVisionResult.model_validate(parsed)
+        if not result.description:
+            result.description = raw
+        result.hazards = _sanity_check_hazards(result.description, result.hazards)
+        return result
+    except (json.JSONDecodeError, AttributeError, TypeError, ValidationError):
+        return PerceptionVisionResult(description=raw)
 
 
 # description(자유 텍스트)에 이 키워드가 있으면 VLM이 "위험 없음"이라고 서술한
@@ -101,6 +149,10 @@ def _get_vision_llm() -> ChatOpenAI:
 async def perception_node(state: AgentState) -> Dict[str, Any]:
     """Perception Agent 노드. 카메라 프레임을 조회해 Vision LLM 으로 분석한다."""
     context_data: Dict[str, Any] = dict(state.get("context_data", {}))
+    messages = state.get("messages", [])
+    user_question = next(
+        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
+    )
 
     logger.info(
         "perception_node 시작: route_type=%s vlm_model=%s",
@@ -149,7 +201,7 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
 
     # ── 2. Vision LLM 호출 ───────────────────────────────────────────────────
     message = HumanMessage(content=[
-        {"type": "text", "text": _VISION_PROMPT},
+        {"type": "text", "text": _build_vision_prompt(user_question)},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"}},
     ])
 
@@ -171,12 +223,12 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
 
     logger.debug("perception_node: VLM 원본 응답=%r", response.content)
 
-    description, hazards = _parse_vision_response(response.content)
-    plan_steps = [HAZARD_PLAN_STEPS[h] for h in hazards]
+    result = _parse_vision_response(response.content)
+    plan_steps = [HAZARD_PLAN_STEPS[h] for h in result.hazards]
 
     logger.info(
-        "perception_node 완료: description=%r hazards=%s plan=%s",
-        description, hazards, plan_steps,
+        "perception_node 완료: description=%r hazards=%s related_hazard=%s answer=%r plan=%s",
+        result.description, result.hazards, result.related_hazard, result.answer, plan_steps,
     )
 
     return {
@@ -184,8 +236,10 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
             **context_data,
             "vision_results": {
                 "status": "success",
-                "description": description,
-                "hazards": hazards,
+                "description": result.description,
+                "hazards": result.hazards,
+                "related_hazard": result.related_hazard,
+                "answer": result.answer,
             },
         },
         # hazard 감지 시 execution agent 가 바로 실행할 plan (route_after_perception 참고).
