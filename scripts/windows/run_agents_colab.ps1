@@ -1,5 +1,5 @@
 ﻿# Supervisor(8001) + knowledge(8002)/execution(8003)/perception(8004) A2A 서버만 띄운다.
-# scripts/run_agents.ps1의 변형 — 모델 서버는 로컬이 아니라 Colab GPU에서 띄운다.
+# scripts/windows/run_agents.ps1의 변형 — 모델 서버는 로컬이 아니라 Colab GPU에서 띄운다.
 #
 # 선행 조건:
 # 1. notebooks/colab_model_server.ipynb를 Colab에서 실행해 모델 서버 + ngrok을 띄워둔다.
@@ -11,7 +11,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $repoRoot
 
 $activatePath = Join-Path $repoRoot ".venv\Scripts\Activate.ps1"

@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 모델 로딩은 수십 초~수 분 걸릴 수 있어 백그라운드 스레드로 돌린다 —
-    # 그래야 /health가 서버 기동 즉시 "loading"으로 응답하고, run_agents.sh의
+    # 그래야 /health가 서버 기동 즉시 "loading"으로 응답하고, scripts/unix/run_agents.sh의
     # 헬스체크 폴링 루프가 실제로 로딩 완료를 기다릴 수 있다.
     threading.Thread(target=backend.load_models, daemon=True).start()
     yield

@@ -1,6 +1,6 @@
 ﻿# 로컬 모델 서버(11500, 7B+1.5B 로드) + Supervisor(8001) +
 # knowledge(8002)/execution(8003)/perception(8004) A2A 서버를 한 번에 띄운다.
-# scripts/run_agents.sh의 Windows PowerShell 포팅.
+# scripts/unix/run_agents.sh의 Windows PowerShell 포팅.
 #
 # 원본 sh와의 의도적 차이:
 # - `trap 'kill 0' EXIT` (Ctrl+C 시 전체 일괄 종료)는 구현하지 않는다.
@@ -9,7 +9,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $repoRoot
 
 $activatePath = Join-Path $repoRoot ".venv\Scripts\Activate.ps1"

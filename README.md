@@ -105,14 +105,15 @@ python mcp_server.py
 
 **Mac / Linux** — 스크립트 하나로 모델 서버(11500) + 4개 에이전트 프로세스(8001~8004) 동시 기동
 ```bash
-bash scripts/run_agents.sh
+bash scripts/unix/run_agents.sh
 ```
 모델 서버가 `/health`로 `{"status":"ok"}`를 반환할 때까지 자동으로 기다린 뒤 나머지
 4개 프로세스를 띄웁니다. 최초 실행 시 HuggingFace 다운로드가 겹치면 몇 분 걸릴 수
 있습니다.
 
-**Windows** — `scripts/run_agents.sh`는 bash 전용이라 그대로 못 돌립니다. 터미널을
-5개 열어 각각 실행하세요 (WSL이나 Git Bash를 쓴다면 위 스크립트를 그대로 써도 됩니다).
+**Windows** — `scripts/unix/run_agents.sh`는 bash 전용이라 그대로 못 돌립니다. PowerShell
+스크립트(`scripts/windows/run_agents.ps1`)로 한 번에 띄우거나, 아래처럼 터미널을 5개 열어
+각각 실행하세요 (WSL이나 Git Bash를 쓴다면 위 sh 스크립트를 그대로 써도 됩니다).
 ```powershell
 # 터미널 1 — 로컬 모델 서버 (11500) — 이 서버가 "ok" 뜰 때까지 기다린 뒤 아래를 실행
 python -m app.model_server.server

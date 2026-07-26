@@ -1,4 +1,4 @@
-﻿# run_agents.ps1 / run_agents_colab.ps1로 띄운 창들은 Start-Process로 분리되어 있어
+﻿# scripts/windows/run_agents.ps1 / run_agents_colab.ps1로 띄운 창들은 Start-Process로 분리되어 있어
 # 종료가 수동이다. 이 스크립트는 포트별로 LISTENING 중인 프로세스를 netstat로 찾아
 # 한 번에 정리한다.
 
