@@ -58,7 +58,7 @@ MCP_TOOLS: List[str] = [
 
 # LLM 이 tool 선택·파라미터 추출에 쓸 시그니처 레퍼런스
 _TOOL_SIGNATURES = """\
-- control_climate(temperature: int [16~32], on: bool = True)
+- control_climate(on: bool = True, temperature: int [16~32] | None = None)
 - set_navigation(destination: str)
 - control_media(action: "play"|"pause"|"next"|"prev")
 - get_vehicle_status()

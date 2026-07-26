@@ -66,6 +66,14 @@ class A2AClient:
             return A2ATaskResponse(
                 task_id=request.task_id, status="error", error=str(exc), error_type="timeout"
             )
+        except httpx.TransportError as exc:
+            # 연결 거부/네트워크 단절 등(ConnectError 포함) — 파라미터를 고쳐도 복구되지
+            # 않으므로 "parameter"가 아니라 timeout과 동일한 재시도 전략(동일 요청 재시도)을
+            # 태워야 한다. TimeoutException도 TransportError의 서브클래스라 위 분기가 먼저 잡는다.
+            logger.warning("A2A send_task 연결 실패 (%s): %s", url, exc)
+            return A2ATaskResponse(
+                task_id=request.task_id, status="error", error=str(exc), error_type="timeout"
+            )
         except Exception as exc:
             logger.warning("A2A send_task 실패 (%s): %s", url, exc)
             return A2ATaskResponse(

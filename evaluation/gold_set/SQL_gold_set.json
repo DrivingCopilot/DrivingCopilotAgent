@@ -1,0 +1,402 @@
+[
+  {
+    "id": "sql_001",
+    "route_type": "sql",
+    "query": "지금 연료 얼마나 남았어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "현재 연료 잔량은 45.3입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT fuel FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "sql_002",
+    "route_type": "sql",
+    "query": "배터리 전압이 제일 낮았을 때 값이 뭐야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "기록된 배터리 전압 중 최저값은 12.3V입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MIN(battery) AS min_battery FROM vehicle_telemetry"
+  },
+  {
+    "id": "sql_003",
+    "route_type": "sql",
+    "query": "센서에 기록된 평균 속도는 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "센서에 기록된 평균 속도는 약 41.8 km/h입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT AVG(speed) AS avg_speed FROM vehicle_telemetry"
+  },
+  {
+    "id": "sql_004",
+    "route_type": "sql",
+    "query": "기록된 최고 속도가 몇이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "기록된 최고 속도는 65.0 km/h입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MAX(speed) AS max_speed FROM vehicle_telemetry"
+  },
+  {
+    "id": "sql_005",
+    "route_type": "sql",
+    "query": "지금 rpm이 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "현재 엔진 회전수(rpm)는 800입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT rpm FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "sql_006",
+    "route_type": "sql",
+    "query": "센서 데이터가 몇 건이나 기록돼 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "실시간 센서 데이터는 총 3건 기록되어 있습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM vehicle_telemetry"
+  },
+  {
+    "id": "sql_007",
+    "route_type": "sql",
+    "query": "지금 차 속도 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "현재 차량 속도는 0.0 km/h로, 정차 중입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT speed FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "sql_008",
+    "route_type": "sql",
+    "query": "평균 배터리 전압이 얼마나 돼?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "평균 배터리 전압은 약 12.37V입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT AVG(battery) AS avg_battery FROM vehicle_telemetry"
+  },
+  {
+    "id": "sql_009",
+    "route_type": "sql",
+    "query": "지금 타이어 공기압 상태 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "최신 타이어 공기압은 FL 33, FR 34, RL 35, RR 35 psi입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT tire FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "sql_010",
+    "route_type": "sql",
+    "query": "현재 배터리 전압이 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "현재 배터리 전압은 12.3V입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT battery FROM vehicle_telemetry ORDER BY ts DESC LIMIT 1"
+  },
+  {
+    "id": "sql_011",
+    "route_type": "sql",
+    "query": "가장 최근에 정비받은 게 언제야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 최근 정비일은 2026-05-10입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MAX(date) AS last_date FROM maintenance_log"
+  },
+  {
+    "id": "sql_012",
+    "route_type": "sql",
+    "query": "마지막으로 엔진오일 교환한 게 언제야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "마지막 엔진오일 교환일은 2025-10-15입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Engine Oil%' ORDER BY date DESC LIMIT 1"
+  },
+  {
+    "id": "sql_013",
+    "route_type": "sql",
+    "query": "지금까지 정비에 쓴 총 비용이 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "정비에 쓴 총 비용은 295.0입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT SUM(cost) AS total_cost FROM maintenance_log"
+  },
+  {
+    "id": "sql_014",
+    "route_type": "sql",
+    "query": "정비 중에 제일 비쌌던 게 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 비쌌던 정비 비용은 150.0입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MAX(cost) AS max_cost FROM maintenance_log"
+  },
+  {
+    "id": "sql_015",
+    "route_type": "sql",
+    "query": "정비를 총 몇 번 받았어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "정비 이력은 총 3건입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM maintenance_log"
+  },
+  {
+    "id": "sql_016",
+    "route_type": "sql",
+    "query": "정기 점검은 몇 번 했어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "정기(Regular) 정비는 총 2건입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM maintenance_log WHERE type = 'Regular'"
+  },
+  {
+    "id": "sql_017",
+    "route_type": "sql",
+    "query": "수리한 부품이 뭐였어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "수리(Repair) 이력의 부품은 앞 브레이크 패드(Brake Pads (Front))입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT parts FROM maintenance_log WHERE type = 'Repair'"
+  },
+  {
+    "id": "sql_018",
+    "route_type": "sql",
+    "query": "정비 한 번에 평균 얼마나 들었어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "평균 정비 비용은 약 98.33입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT AVG(cost) AS avg_cost FROM maintenance_log"
+  },
+  {
+    "id": "sql_019",
+    "route_type": "sql",
+    "query": "마지막 정비 때 주행거리가 얼마였어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "마지막 정비 시 주행거리는 25,000 km였습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT mileage FROM maintenance_log ORDER BY date DESC LIMIT 1"
+  },
+  {
+    "id": "sql_020",
+    "route_type": "sql",
+    "query": "브레이크 패드 교체한 게 언제야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "브레이크 패드를 교체한 날짜는 2026-03-20입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Brake%' ORDER BY date DESC LIMIT 1"
+  },
+  {
+    "id": "sql_021",
+    "route_type": "sql",
+    "query": "타이어 로테이션 한 날짜 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "타이어 로테이션을 한 날짜는 2026-05-10입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT date FROM maintenance_log WHERE parts LIKE '%Tire Rotation%'"
+  },
+  {
+    "id": "sql_022",
+    "route_type": "sql",
+    "query": "10만 원, 그러니까 100 이상 든 정비가 몇 건이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "비용이 100 이상인 정비는 1건입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM maintenance_log WHERE cost >= 100"
+  },
+  {
+    "id": "sql_023",
+    "route_type": "sql",
+    "query": "아직 해결 안 된 경고 코드 목록 알려줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "미해결 진단 코드는 P0301, P0420입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE resolved = 0"
+  },
+  {
+    "id": "sql_024",
+    "route_type": "sql",
+    "query": "미해결 경고가 몇 개 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "미해결 진단 코드는 2개입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM dtc_codes WHERE resolved = 0"
+  },
+  {
+    "id": "sql_025",
+    "route_type": "sql",
+    "query": "심각도가 High인 코드 뭐뭐 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "심각도가 High인 진단 코드는 P0301, U0100입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE severity = 'High'"
+  },
+  {
+    "id": "sql_026",
+    "route_type": "sql",
+    "query": "P0301 코드가 무슨 뜻이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "P0301은 'Cylinder 1 Misfire Detected'(1번 실린더 실화 감지)를 의미합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT description FROM dtc_codes WHERE code = 'P0301'"
+  },
+  {
+    "id": "sql_027",
+    "route_type": "sql",
+    "query": "이미 해결된 진단 코드는 뭐야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "해결된 진단 코드는 U0100입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE resolved = 1"
+  },
+  {
+    "id": "sql_028",
+    "route_type": "sql",
+    "query": "진단 코드가 전부 몇 개 등록돼 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "등록된 진단 코드는 총 3개입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM dtc_codes"
+  },
+  {
+    "id": "sql_029",
+    "route_type": "sql",
+    "query": "심각하면서 아직 해결 안 된 코드 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "심각도가 High이면서 미해결인 코드는 P0301입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE severity = 'High' AND resolved = 0"
+  },
+  {
+    "id": "sql_030",
+    "route_type": "sql",
+    "query": "촉매(catalyst) 관련 진단 코드 있어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "촉매 관련 진단 코드는 P0420입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT code FROM dtc_codes WHERE description LIKE '%Catalyst%'"
+  },
+  {
+    "id": "sql_031",
+    "route_type": "sql",
+    "query": "진단 코드를 심각도별로 몇 개씩인지 보여줘",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "심각도별 진단 코드 수는 High 2개, Medium 1개입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT severity, COUNT(*) AS cnt FROM dtc_codes GROUP BY severity"
+  },
+  {
+    "id": "sql_032",
+    "route_type": "sql",
+    "query": "지금까지 총 주행 거리가 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "기록된 총 주행 거리는 180.7 km입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT SUM(distance) AS total_distance FROM trip_history"
+  },
+  {
+    "id": "sql_033",
+    "route_type": "sql",
+    "query": "한 번에 가장 멀리 간 운행 거리가 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 긴 운행 거리는 120.5 km입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MAX(distance) AS max_distance FROM trip_history"
+  },
+  {
+    "id": "sql_034",
+    "route_type": "sql",
+    "query": "운행 한 번에 평균 몇 km나 달렸어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "운행당 평균 주행 거리는 약 60.23 km입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT AVG(distance) AS avg_distance FROM trip_history"
+  },
+  {
+    "id": "sql_035",
+    "route_type": "sql",
+    "query": "운행하면서 연료를 총 얼마나 썼어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "전체 운행 동안 소모한 총 연료는 약 13.9입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT SUM(fuel) AS total_fuel FROM trip_history"
+  },
+  {
+    "id": "sql_036",
+    "route_type": "sql",
+    "query": "운행 중 가장 빨랐던 평균 속도가 몇이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "운행 기록 중 가장 높은 평균 속도는 75.0 km/h입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MAX(avg_speed) AS max_avg_speed FROM trip_history"
+  },
+  {
+    "id": "sql_037",
+    "route_type": "sql",
+    "query": "운행 기록이 총 몇 건이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "운행 기록은 총 3건입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM trip_history"
+  },
+  {
+    "id": "sql_038",
+    "route_type": "sql",
+    "query": "가장 최근 운행 거리가 얼마였어?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 최근 운행의 주행 거리는 15.0 km입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT distance FROM trip_history ORDER BY start_time DESC LIMIT 1"
+  },
+  {
+    "id": "sql_039",
+    "route_type": "sql",
+    "query": "평균 속도 60 이상으로 달린 운행이 몇 번이야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "평균 속도가 60 km/h 이상인 운행은 1건입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT COUNT(*) AS cnt FROM trip_history WHERE avg_speed >= 60"
+  },
+  {
+    "id": "sql_040",
+    "route_type": "sql",
+    "query": "가장 짧게 운행한 거리가 얼마야?",
+    "expected_tool_name": null,
+    "expected_tool_params": null,
+    "expected_answer": "가장 짧은 운행 거리는 15.0 km입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": "SELECT MIN(distance) AS min_distance FROM trip_history"
+  }
+]
