@@ -86,6 +86,7 @@ class TestSupervisorNode:
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
                     "related_hazard": "rain",
+                    "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
             next_agent="perception",
@@ -152,6 +153,7 @@ class TestSupervisorNode:
                     "description": "비가 내리고 있습니다.",
                     "hazards": ["rain"],
                     "related_hazard": "rain",
+                    "answer": "네, 비가 내리고 있습니다.",
                 }
             },
             next_agent="perception",
@@ -193,6 +195,7 @@ class TestSupervisorNode:
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
                     "related_hazard": "rain",
+                    "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
             next_agent="perception",
@@ -317,6 +320,7 @@ class TestComposeVisionSummary:
             "description": "비가 내리고 있습니다.",
             "hazards": ["rain"],
             "related_hazard": "rain",
+            "answer": "네, 비가 내리고 있습니다.",
         }
         result = _compose_vision_summary(vision_results)
         assert "네" in result
@@ -330,10 +334,32 @@ class TestComposeVisionSummary:
             "description": "맑은 날씨입니다.",
             "hazards": [],
             "related_hazard": "rain",
+            "answer": "아니요, 비가 오지 않습니다.",
         }
         result = _compose_vision_summary(vision_results)
         assert "아니요" in result
         assert "비" in result
+
+    def test_related_hazard_present_but_answer_empty_falls_back_to_description(self):
+        """
+        회귀 테스트: related_hazard는 채웠는데 answer가 비어있으면(실측된 VLM
+        오판정 패턴 — "경고 표시판 있어?"에 related_hazard="rain", answer=""로
+        응답) related_hazard 판정 자체를 신뢰하지 않고 description을 그대로
+        노출한다. "네/아니요" 확답이나 hazard 통보 fallback 모두 건너뛴다.
+        """
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "description": "우산을 쓴 운전자가 눈이 내리는 숲길을 달리고 있습니다.",
+            "hazards": [],
+            "related_hazard": "rain",
+            "answer": "",
+        }
+        result = _compose_vision_summary(vision_results)
+        assert result == "우산을 쓴 운전자가 눈이 내리는 숲길을 달리고 있습니다."
+        assert "네" not in result
+        assert "아니요" not in result
 
     def test_no_related_hazard_uses_vlm_answer(self):
         """3종 hazard 어휘 밖의 질문(예: 도로 표지판)은 VLM이 직접 작성한 answer를 그대로 쓴다."""

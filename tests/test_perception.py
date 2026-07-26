@@ -366,6 +366,19 @@ class TestBuildVisionPrompt:
 
         assert "운전자가 다음과 같이 질문했습니다" not in _build_vision_prompt("")
 
+    def test_includes_few_shot_examples_when_question_present(self):
+        """
+        related_hazard 오판정(hazard 어휘 밖 질문에도 반사적으로 채우는 문제)을
+        줄이기 위해 넣은 few-shot 예시가 실제로 프롬프트에 포함되는지 확인.
+        (실측 결과 이 few-shot만으로는 오판정이 완전히 사라지지 않았지만,
+        프롬프트에 의도대로 들어가는지는 별개로 검증할 가치가 있다.)
+        """
+        from app.agents.perception import _build_vision_prompt
+
+        prompt = _build_vision_prompt("전방에 경고 표지판 있어?")
+        assert "전방에 경고 표시판 있어" in prompt or "경고 표시판" in prompt
+        assert "related_hazard: null" in prompt
+
 
 class TestParseVisionResponse:
     def test_parses_answer_and_related_hazard_fields(self):

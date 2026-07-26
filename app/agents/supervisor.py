@@ -118,6 +118,15 @@ def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     related_hazard = vision_results.get("related_hazard")
     answer = vision_results.get("answer", "")
 
+    # 안전장치: related_hazard는 채웠는데 answer가 비어있다면, VLM이 프롬프트
+    # 지시("related_hazard와 무관하게 answer는 항상 채워라")를 못 따른 것이라
+    # related_hazard 판단 자체도 신뢰하기 어렵다(실측 사례: "경고 표시판 있어?"
+    # 질문에 related_hazard="rain", answer=""로 응답). hazard 통보 fallback도
+    # 화면의 hazard를 질문과 무관하게 반사적으로 보여줄 위험이 같아서 같이
+    # 건너뛰고, 최소한 사실인 description만 노출한다.
+    if related_hazard and not answer:
+        return description
+
     if related_hazard:
         label = HAZARD_LABELS[related_hazard]
         if related_hazard in hazards:

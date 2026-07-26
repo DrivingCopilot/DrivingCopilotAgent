@@ -84,10 +84,20 @@ def _build_vision_prompt(user_question: str) -> str:
         "이 영상에서 날씨, 도로 상태, 위험 상황(보행자, 장애물, 경고등 등)을 분석하세요.\n\n"
     )
     question_part = (
-        f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n'
-        "이 질문이 rain(비)/tunnel(터널)/warning_light(대시보드 경고등) 중 하나에 "
-        "대한 것이면 related_hazard에 그 값을, 아니면 null을 넣으세요. "
-        "질문 내용과 무관하게 영상을 근거로 answer 필드에 직접 답변하세요.\n\n"
+        f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n\n'
+        "related_hazard는 질문이 rain(비)/tunnel(터널)/warning_light(대시보드 경고등) "
+        "중 하나를 직접 묻는 경우에만 채우고, 그 외(도로 표지판, 속도, 날씨 전반, "
+        "잡담 등)에는 반드시 null로 두세요. answer는 related_hazard 값과 무관하게 "
+        "항상 채우세요 — related_hazard를 정했다고 answer를 비워두면 안 됩니다.\n\n"
+        "예시:\n"
+        '- 질문: "지금 비 와?" → related_hazard: "rain" (비를 직접 물음), '
+        'answer: "네, 비가 내리고 있습니다."\n'
+        '- 질문: "전방에 경고 표시판 있어?" → related_hazard: null '
+        '(도로 표지판은 대시보드 경고등이 아님), '
+        'answer: "네, 전방에 속도제한 표지판이 보입니다." (영상을 근거로 실제 답변)\n'
+        '- 질문: "오늘 날씨 어때?" → related_hazard: null '
+        '(rain/tunnel/warning_light 중 하나를 콕 집어 물은 게 아님), '
+        'answer: "비가 내리는 흐린 날씨입니다."\n\n'
         if user_question else ""
     )
     schema_part = (
