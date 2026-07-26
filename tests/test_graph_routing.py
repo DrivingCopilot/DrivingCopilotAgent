@@ -207,15 +207,19 @@ async def test_immediate_end(patch_supervisor):
 
 
 @pytest.mark.asyncio
-async def test_recursion_limit_safety(patch_supervisor):
+async def test_unmappable_plan_terminates_via_retry_limit_not_recursion(patch_supervisor):
+    """
+    supervisor가 (mock으로) 계속 'execution'만 반복 지시해도, plan을 MCP tool로
+    매핑 못 하는 상황은 execution.py의 invalid_tool 폴백 → observe.py의 재시도
+    한도에서 정상 종료돼야 한다. 예전엔 매핑 실패가 빈 tool_calls로 "성공"처럼
+    통과돼 이 안전장치를 못 타고 LangGraph의 recursion_limit(하드 크래시)까지
+    가야 멈췄는데, 지금은 그 전에 정상적으로 __end__로 끝나야 한다.
+    """
     patch_supervisor(
         [{"next_agent": "execution", "plan": ["s1"], "feedback": ""}] * 30
     )
 
-    with pytest.raises(Exception) as exc_info:
-        await run_graph("loop test")
+    result = await run_graph("loop test")
 
-    err_str = str(exc_info.value).lower()
-    assert (
-        "recursion" in err_str or "limit" in err_str or "maximum" in err_str
-    ), f"expected recursion-related error, got: {exc_info.value}"
+    assert result["next_agent"] == "__end__"
+    assert any(tc.get("error_type") == "invalid_tool" for tc in result["tool_calls"])

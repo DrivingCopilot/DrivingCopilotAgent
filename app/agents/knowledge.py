@@ -128,5 +128,8 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             "messages": [AIMessage(content=f"Knowledge Agent encountered an error: {e}")],
             "next_agent": "supervisor",
             "error_count": error_count,
-            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}"
+            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}",
+            # 성공 경로(위)는 plan[1:]로 갱신하는데 예외 경로만 plan을 그대로 둬서
+            # 다음 턴에 supervisor가 실패한 스텝을 stale plan으로 다시 보는 걸 방지.
+            "plan": [],
         }

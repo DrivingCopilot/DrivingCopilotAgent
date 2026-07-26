@@ -374,6 +374,20 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         next_agent = "__end__"
         new_plan = []
 
+    # 안전장치: execution이 이미 이번 턴에 성공했는데도(last_tool_call.status ==
+    # "success") LLM이 다시 'execution'을 선택하면 — perception Rule 2 위반 차단과
+    # 동일한 원리로 — 강제로 종료 처리한다. execution은 호출될 때마다 plan의 모든
+    # 스텝을 한 번에 소비하므로(app/agents/execution.py의 run_execution), 같은 턴
+    # 안에서 성공 직후 재호출될 정당한 이유가 없다 — 방치하면 "에어컨 25도+창문
+    # 닫기"처럼 멀티 액션 요청에서 성공한 실행을 계속 반복하는 무한 루프가 된다.
+    if next_agent == "execution" and last_tool_call.get("status") == "success":
+        logger.warning(
+            "supervisor_node: execution 재호출 차단(last_tool_call=%s) — __end__ 로 강제 전환",
+            last_tool_call,
+        )
+        next_agent = "__end__"
+        new_plan = []
+
     # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
     # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면

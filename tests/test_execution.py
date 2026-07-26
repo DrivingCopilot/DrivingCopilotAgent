@@ -357,7 +357,12 @@ class TestRunExecution:
         assert "tool_result" in types
 
     async def test_unknown_tool_skipped_after_retry(self):
-        """알 수 없는 tool 이름 추출 시 재추출 실패 → skip (tool_calls 에 추가 안 됨)."""
+        """
+        알 수 없는 tool 이름 추출 시 재추출도 실패하면 해당 step은 skip되지만,
+        plan 전체에서 실행된 tool이 하나도 없으므로 invalid_tool 에러 하나로
+        집계된다 (빈 tool_calls를 observe가 "성공"처럼 취급해 무한 루프에
+        빠지는 걸 막기 위함 — execution.py의 invalid_tool 폴백 참고).
+        """
         state = _make_state(plan=["알 수 없는 작업"])
 
         with (
@@ -371,17 +376,25 @@ class TestRunExecution:
             from app.agents.execution import run_execution
             result = await run_execution(state)
 
-        assert result["tool_calls"] == []
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["status"] == "error"
+        assert result["tool_calls"][0]["error_type"] == "invalid_tool"
 
     async def test_empty_plan_returns_no_tool_calls(self):
-        """plan 이 비어 있으면 tool_calls 변화 없음."""
+        """
+        plan이 비어 있으면 실행할 tool도 없으므로 invalid_tool 에러 하나로
+        집계된다 — execution이 호출됐는데 아무 것도 안 하고 "성공"처럼
+        지나가면 observe가 무한 루프를 못 막기 때문(execution.py 참고).
+        """
         state = _make_state(plan=[])
 
         with patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock):
             from app.agents.execution import run_execution
             result = await run_execution(state)
 
-        assert result["tool_calls"] == []
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["status"] == "error"
+        assert result["tool_calls"][0]["error_type"] == "invalid_tool"
 
     async def test_get_vehicle_status_updates_last_status_report(self):
         """get_vehicle_status 성공 시 last_status_report 키로 vehicle_state 갱신."""
