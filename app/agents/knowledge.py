@@ -126,6 +126,23 @@ Rules:
 Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
 
 
+# 단순 질의용 1.5B 요약 프롬프트 — 관계형 융합/CoT가 필요 없는(단일 소스, 매뉴얼
+# 절차/설명형) 질의는 검색된 context를 1.5B가 그대로 요약한다(설계 스펙: "요약은
+# 1.5B"). 7B fusion(~23~60s)을 안 타므로 대부분 질의가 fast path(~5s)로 끝난다.
+KNOWLEDGE_SUMMARIZE_PROMPT = """You are the Knowledge Summarizer (1.5B) in an on-device driving copilot.
+You are given text that was ALREADY retrieved from this vehicle's own official owner's manual
+(Vector RAG) and/or knowledge graph. Your job is NOT to search and NOT to reason multi-hop — it is to
+summarize the retrieved context into one concise, grounded answer to the user's question.
+
+Rules:
+- The retrieved context IS the source of truth and IS from the manual — never say you lack access to the
+  manual or tell the user to contact the manufacturer when relevant context is present below.
+- Answer ONLY from the context; do not add facts that are not in it.
+- Keep it short (3~5 sentences) and directly answer the question.
+
+Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
+
+
 # 관계형/다중홉(Graph Context Fusion·CoT)이 필요한 질의를 감지하는 휴리스틱 키워드.
 # supervisor Rule 3가 관계형 질의에 Graph RAG를 지시하는 것과 같은 취지 — 종류/구성/
 # 부품/원인/연동/차이 등을 묻거나 여러 소스를 엮어야 하는 질의는 7B 융합/추론으로 보낸다.
@@ -298,11 +315,76 @@ async def _fuse_with_7b(query: str, context_text: str) -> str:
     llm = ChatOpenAI(
         model=KNOWLEDGE_FUSION_MODEL,
         temperature=0.2,
-        max_tokens=768,
+        # 7B fusion 생성 시간은 출력 토큰 수에 거의 선형 — 768은 실측 ~23~60초로
+        # A2A 타임아웃을 넘기는 주 병목이었다. 주행 답변은 3~5문장이면 충분하므로
+        # 384로 줄여 생성 시간을 ~절반으로 낮춘다(품질 손실 없이 지연 근본 개선).
+        max_tokens=384,
         base_url=MODEL_SERVER_URL,
     )
     response = await llm.ainvoke([
         SystemMessage(content=KNOWLEDGE_FUSION_PROMPT),
+        HumanMessage(content=f"[User Query]\n{query}\n\n[Retrieved Context]\n{context_text}"),
+    ])
+    return (response.content or "").strip()
+
+
+def _is_probably_korean(text: str) -> bool:
+    """최종 답변이 (충분히) 한국어인지 판정한다.
+
+    한글 음절과 라틴 문자 수를 비교해, 라틴이 지배적이면(영어 유출) False.
+    프롬프트의 'Always write in Korean' 지시를 1.5B/7B가 영어 원문 컨텍스트를
+    미러링하며 무시하는 경우를 결정적으로 잡기 위한 저비용 휴리스틱이다.
+    """
+    if not text:
+        return True  # 빈 문자열은 별도 malformed 가드가 처리 — 여기선 통과
+    hangul = sum(1 for ch in text if "가" <= ch <= "힣")
+    latin = sum(1 for ch in text if ("a" <= ch.lower() <= "z"))
+    if hangul + latin == 0:
+        return True  # 숫자/기호만(예: 수치 답변) — 언어 판정 대상 아님
+    return hangul >= latin  # 한글이 라틴 이상이면 한국어로 본다
+
+
+async def _translate_to_korean(text: str) -> str:
+    """영어 등으로 나온 최종 답변을 1.5B로 한국어 번역한다(fast·저비용)."""
+    llm = ChatOpenAI(
+        model=KNOWLEDGE_RETRIEVAL_MODEL,
+        temperature=0.0,
+        max_tokens=384,
+        base_url=MODEL_SERVER_URL,
+    )
+    response = await llm.ainvoke([
+        SystemMessage(content=(
+            "You are a translator. Translate the user's text into natural Korean (한국어). "
+            "Output ONLY the Korean translation — no preamble, no notes, no original text. "
+            "Preserve technical terms and numbers accurately."
+        )),
+        HumanMessage(content=text),
+    ])
+    return (response.content or "").strip()
+
+
+async def _ensure_korean(text: str) -> str:
+    """최종 답변이 한국어가 아니면 번역해 한국어를 보장한다(모든 synthesis 경로 공통 가드)."""
+    if _is_probably_korean(text):
+        return text
+    logger.info("knowledge: 최종 답변이 비한국어로 감지됨 — 1.5B 한국어 번역 적용")
+    translated = await _translate_to_korean(text)
+    # 번역이 비거나 여전히 비한국어면 원문 유지(무응답 방지 — malformed 가드가 이어서 처리).
+    if translated and _is_probably_korean(translated):
+        return translated
+    return text
+
+
+async def _summarize_with_1_5b(query: str, context_text: str) -> str:
+    """1.5B로 검색된 context를 요약(단순 질의 fast path). 관계형 융합/CoT 불필요."""
+    llm = ChatOpenAI(
+        model=KNOWLEDGE_RETRIEVAL_MODEL,
+        temperature=0.1,
+        max_tokens=384,
+        base_url=MODEL_SERVER_URL,
+    )
+    response = await llm.ainvoke([
+        SystemMessage(content=KNOWLEDGE_SUMMARIZE_PROMPT),
         HumanMessage(content=f"[User Query]\n{query}\n\n[Retrieved Context]\n{context_text}"),
     ])
     return (response.content or "").strip()
@@ -391,12 +473,21 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             # 단순 검색: 1.5B가 직접 검색+요약한 답을 그대로 사용.
             final_answer = react_answer
         else:
-            # context는 있으나 1.5B가 직접 검색 안 함(폴백) → react_answer는 미근거이므로
-            # 검색된 context를 1.5B가 아닌 7B로 요약해 grounding한다.
+            # 단순 질의(is_complex=False)인데 1.5B가 직접 검색은 안 함(폴백) →
+            # react_answer는 미근거라 못 쓴다. 설계 스펙("요약은 1.5B")대로 검색된
+            # context를 1.5B로 요약해 grounding한다 — 7B fusion(~23~60s)을 피해
+            # fast path(~5s)로 끝낸다. 1.5B 요약이 부실하면 7B로만 폴백한다.
             await _ws.websocket_manager.send_status(
-                json.dumps({"type": "status", "data": "Summarizing retrieved context..."})
+                json.dumps({"type": "status", "data": "Summarizing retrieved context (1.5B)..."})
             )
-            final_answer = await _fuse_with_7b(retrieval_query or user_query, tool_ctx["all"])
+            final_answer = await _summarize_with_1_5b(retrieval_query or user_query, tool_ctx["all"])
+            if (not final_answer or not final_answer.strip()
+                    or "<tool_call>" in final_answer or _is_prompt_echo(final_answer)):
+                logger.warning("knowledge: 1.5B 요약이 부실 — 7B 융합으로 폴백")
+                await _ws.websocket_manager.send_status(
+                    json.dumps({"type": "status", "data": "Fusing graph+vector context (7B CoT)..."})
+                )
+                final_answer = await _fuse_with_7b(retrieval_query or user_query, tool_ctx["all"])
 
         # 답변이 비었거나 <tool_call> 태그가 노출됐거나 입력 프롬프트를 그대로
         # echo한 경우 — 조용히 "성공"으로 넘기면 observe/CRAG의 실패 감지를 모두
@@ -406,6 +497,11 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             raise ValueError(
                 f"Knowledge agent produced an empty or malformed final answer: {final_answer!r}"
             )
+
+        # 언어 보정(모든 synthesis 경로 공통): 프롬프트의 'Always write in Korean'을
+        # 1.5B/7B가 영어 원문 컨텍스트를 미러링하며 무시하는 경우가 있어(예: 배터리
+        # 안전 답변이 영어로 유출) — 최종 답변이 비한국어면 결정적으로 한국어 번역한다.
+        final_answer = await _ensure_korean(final_answer)
 
         # Context data update (accumulate findings)
         context_data["last_knowledge_result"] = final_answer

@@ -134,6 +134,93 @@ class TestSupervisorNode:
 
         assert result["next_agent"] == "perception"
 
+    async def test_repeated_execution_same_tool_is_blocked(self):
+        """
+        직전에 execution이 get_vehicle_status를 성공 실행했는데 LLM이 또 같은
+        tool로 execution 위임을 시도하면 — get_vehicle_status는 매번 success라
+        error_count/MAX_RETRY 백스톱이 안 걸려 recursion_limit까지 무한 반복한다 —
+        코드 레벨 안전장치가 __end__로 강제 전환해야 한다(execution 재호출 차단).
+        """
+        llm_payload = {
+            "reasoning": "타이어 공기압을 확인하기 위해 상태를 다시 조회합니다.",
+            "plan": ["get_vehicle_status"],
+            "next_agent": "execution",
+        }
+        state = {
+            "messages": [HumanMessage(content="타이어 공기압 체크는 어떻게 해?")],
+            "route_type": "",
+            "plan": [],
+            "next_agent": "supervisor",
+            "tool_calls": [{
+                "tool": "get_vehicle_status",
+                "params": {},
+                "result": "타이어 압력(psi) 33.0/33.0/32.0/33.0",
+                "status": "success",
+            }],
+            "context_data": {},
+            "error_count": {},
+            "feedback": "",
+        }
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "__end__"
+        assert result["plan"] == []
+        # 무한루프 대신 직전 성공 tool 결과로 결정적 답변이 나가야 한다(침묵 방지).
+        assert result["messages"][0].content.strip()
+
+    async def test_execution_different_tool_is_allowed(self):
+        """
+        멀티스텝 plan의 정당한 다음 단계 — 직전 성공 tool과 다른 tool로 execution을
+        위임하는 경우 — 는 재호출 차단에 걸리지 않고 그대로 통과해야 한다.
+        """
+        llm_payload = {
+            "reasoning": "이제 창문을 닫습니다.",
+            "plan": ["control_window is_open=false"],
+            "next_agent": "execution",
+        }
+        state = {
+            "messages": [HumanMessage(content="에어컨 켜고 창문 닫아줘")],
+            "route_type": "",
+            "plan": [],
+            "next_agent": "supervisor",
+            "tool_calls": [{
+                "tool": "control_climate",
+                "params": {"temperature": 22, "on": True},
+                "result": "에어컨을 켜고 온도를 22℃로 설정했어요.",
+                "status": "success",
+            }],
+            "context_data": {},
+            "error_count": {},
+            "feedback": "",
+        }
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "execution"
+
     async def test_vision_answer_confirms_asked_hazard_when_present(self):
         """비가 감지된 상태에서 '비와?'를 물으면 '네, 비가 감지되었습니다' 류로 답해야 한다."""
         llm_payload = {

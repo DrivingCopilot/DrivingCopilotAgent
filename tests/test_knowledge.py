@@ -30,6 +30,8 @@ from app.agents.knowledge import (
     text_to_sql_query,
     _extract_query_terms,
     _is_unusable_result,
+    _is_probably_korean,
+    _ensure_korean,
 )
 
 
@@ -72,11 +74,12 @@ class FakeReactAgent:
 
 
 def _patch_agent(fake_agent, *, fused="7B 융합 답변",
-                 det_ctx=None):
+                 summarized="1.5B 요약 답변", det_ctx=None):
     """knowledge 모듈의 LLM/에이전트 생성 + 새 2단계(검색→합성) 헬퍼를 mock.
 
     - _deterministic_retrieve: ReAct가 tool 미호출 시의 안전망(실제 MCP 대신 stub).
     - _fuse_with_7b: 복잡 질의의 7B Graph Fusion/CoT 합성(실제 7B 호출 대신 stub).
+    - _summarize_with_1_5b: 단순 질의의 1.5B 요약 fast path(실제 1.5B 호출 대신 stub).
     """
     if det_ctx is None:
         det_ctx = {"graph": "", "vector": "det-vector", "sql": "",
@@ -87,6 +90,10 @@ def _patch_agent(fake_agent, *, fused="7B 융합 답변",
         ChatOpenAI=MagicMock(return_value=MagicMock()),
         _deterministic_retrieve=AsyncMock(return_value=det_ctx),
         _fuse_with_7b=AsyncMock(return_value=fused),
+        _summarize_with_1_5b=AsyncMock(return_value=summarized),
+        # 언어 보정은 passthrough로 stub(실제 번역 LLM 호출 방지) — 언어 판정/번역
+        # 자체는 별도 단위 테스트에서 검증한다.
+        _ensure_korean=AsyncMock(side_effect=lambda t: t),
     )
 
 
@@ -219,10 +226,11 @@ async def test_knowledge_node_empty_response_falls_back_to_retrieval_and_fusion(
         "error_count": {},
     }
 
-    with _patch_agent(fake, fused="폴백 합성 답변"):
+    # 단순 질의(graph 근거 없음)의 폴백 요약은 1.5B가 담당(설계 스펙: "요약은 1.5B").
+    with _patch_agent(fake, summarized="폴백 요약 답변"):
         result = await knowledge_node(state)
 
-    assert result["context_data"]["last_knowledge_result"] == "폴백 합성 답변"
+    assert result["context_data"]["last_knowledge_result"] == "폴백 요약 답변"
     assert result["context_data"]["knowledge_failed"] is False
     assert result["next_agent"] == "supervisor"
 
@@ -410,6 +418,47 @@ def test_is_unusable_result(text, unusable):
     assert _is_unusable_result(text) is unusable
 
 
+@pytest.mark.parametrize(
+    "text,is_korean",
+    [
+        ("배터리 취급 시 절연장갑을 착용하세요.", True),
+        ("When handling the battery, wear insulating gloves.", False),
+        ("타이어 압력은 33 psi 입니다.", True),          # 한글+숫자 혼합 → 한국어
+        ("33.0/33.0/32.0/33.0", True),                    # 숫자/기호만 → 판정 제외(통과)
+        ("", True),                                        # 빈값 → 별도 가드가 처리
+        ("HDA는 ADAS의 한 기능입니다.", True),            # 소량 영어 약어 섞여도 한국어
+    ],
+)
+def test_is_probably_korean(text, is_korean):
+    assert _is_probably_korean(text) is is_korean
+
+
+@pytest.mark.asyncio
+async def test_ensure_korean_translates_english_answer():
+    # 최종 답변이 영어로 유출되면 결정적으로 한국어 번역해야 한다.
+    english = "When handling the battery, wear insulating gloves and avoid short circuits."
+    with patch(
+        "app.agents.knowledge._translate_to_korean",
+        new=AsyncMock(return_value="배터리를 다룰 때는 절연장갑을 착용하고 단락을 피하세요."),
+    ) as translate_mock:
+        result = await _ensure_korean(english)
+    assert result == "배터리를 다룰 때는 절연장갑을 착용하고 단락을 피하세요."
+    translate_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_korean_keeps_korean_answer_without_calling_translator():
+    # 이미 한국어면 번역 LLM을 호출하지 않고 그대로 반환(불필요한 지연 방지).
+    korean = "배터리를 다룰 때는 절연장갑을 착용하세요."
+    with patch(
+        "app.agents.knowledge._translate_to_korean",
+        new=AsyncMock(return_value="쓰이면 안 됨"),
+    ) as translate_mock:
+        result = await _ensure_korean(korean)
+    assert result == korean
+    translate_mock.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_no_usable_context_fails_instead_of_shipping_hallucination():
     # 1.5B가 tool을 안 부르고(폴백), 결정적 검색도 graph/vector 모두 무결과면 —
@@ -520,6 +569,39 @@ async def test_simple_query_keeps_1_5b_answer_without_fusion():
 
     assert result["context_data"]["last_knowledge_result"] == "트립 버튼을 짧게 누르면 주행거리가 표시됩니다."
     fuse_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_simple_ungrounded_fallback_summarizes_with_1_5b_not_7b():
+    # 1.5B ReAct가 tool을 안 불러(ungrounded) 결정적 검색으로 grounding했지만,
+    # graph 근거가 없고 관계형 키워드도 없는 단순 질의라면 — 7B fusion(느림)이
+    # 아니라 1.5B 요약(fast path)으로 검색 context를 정리해야 한다(설계 스펙).
+    fake = FakeReactAgent(answer="근거 없는 답", tool_outputs=[])  # ungrounded
+    state = {
+        "messages": [HumanMessage(content="배터리를 다룰 때 안전상 주의할 점이 뭐야?")],
+        "plan": ["배터리 안전 주의사항 검색"],
+        "context_data": {},
+        "error_count": {},
+    }
+
+    # 결정적 검색은 vector만 확보(graph 없음) → is_complex=False → 1.5B 요약 경로.
+    det = {"graph": "", "vector": "배터리 취급 시 절연장갑 착용, 단자 단락 주의",
+           "sql": "", "all": "[Vector RAG]\n배터리 취급 시 절연장갑 착용, 단자 단락 주의"}
+    fuse_mock = AsyncMock(return_value="이건 쓰이면 안 됨")
+    summarize_mock = AsyncMock(return_value="배터리 취급 시 절연장갑을 착용하고 단자 단락에 주의하세요.")
+    with patch.multiple(
+        "app.agents.knowledge",
+        create_react_agent=MagicMock(return_value=fake),
+        ChatOpenAI=MagicMock(return_value=MagicMock()),
+        _deterministic_retrieve=AsyncMock(return_value=det),
+        _fuse_with_7b=fuse_mock,
+        _summarize_with_1_5b=summarize_mock,
+    ):
+        result = await knowledge_node(state)
+
+    assert result["context_data"]["last_knowledge_result"] == "배터리 취급 시 절연장갑을 착용하고 단자 단락에 주의하세요."
+    summarize_mock.assert_awaited_once()   # 1.5B fast path 사용
+    fuse_mock.assert_not_awaited()         # 7B fusion은 안 탐
 
 
 @pytest.mark.asyncio

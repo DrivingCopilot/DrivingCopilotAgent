@@ -92,6 +92,19 @@ def _infer_intended_agent(reasoning: str) -> str | None:
     return mentioned[0] if len(mentioned) == 1 else None
 
 
+def _plan_tool_name(plan: List[str]) -> str:
+    """plan 첫 스텝에서 MCP tool 이름만 뽑는다.
+
+    plan 스텝은 "get_vehicle_status" 또는 "control_climate temperature=22 on=true"
+    처럼 'tool명 [args...]' 형태라, 첫 토큰이 tool 이름이다. execution 재위임이
+    직전 성공한 tool과 같은 tool을 다시 부르려는지(무한루프) 비교하는 데 쓴다.
+    """
+    if not plan:
+        return ""
+    first = str(plan[0]).strip()
+    return first.split()[0] if first else ""
+
+
 # LangGraph 내부 라우팅 예약어. SupervisorDecision.plan은 List[str]일 뿐 값
 # 자체엔 제약이 없어(217~227줄 grammar-constrained decoding은 스키마 이탈만
 # 막는다), 모델이 next_agent에 쓰는 값을 plan 스텝으로 착각해 그대로
@@ -193,10 +206,20 @@ You rely on Chain-of-Thought reasoning to make decisions.
    words map directly to a tool name (e.g. "wiper"/"와이퍼" -> control_wiper), use that tool. Do NOT default
    to "trigger_emergency" or "set_driving_mode" unless the user explicitly asks for an emergency action or
    a driving-mode change.
+   CRITICAL — "how to" is knowledge, NOT execution: a request asking HOW to do something or for a
+   PROCEDURE/EXPLANATION ("어떻게 해?"/"~하는 방법"/"~하는 법"/"어떻게 확인해?"/"어떻게 체크해?") is a
+   manual question — delegate to 'knowledge' (Rule 3), NEVER to 'execution' — even when it mentions a
+   metric the vehicle can report (tire pressure, fuel, etc.). The word "체크/확인/점검" attached to
+   "어떻게/방법/법" means "explain the procedure", NOT "read the current value". Only a bare status query
+   ("얼마야?"/"조회해줘"/"보여줘" — asking for the current VALUE) goes to 'execution'.
    Examples:
    - User: "와이퍼 켜줘" -> plan: ["control_wiper on=true"], next_agent: "execution"
    - User: "에어컨 22도로 켜줘" -> plan: ["control_climate temperature=22 on=true"], next_agent: "execution"
    - User: "긴급 상황이야 신고해줘" -> plan: ["trigger_emergency kind=call"], next_agent: "execution"
+   - User: "타이어 공기압 얼마야?"/"타이어 공기압 조회해줘" -> a status VALUE query
+     -> plan: ["get_vehicle_status"], next_agent: "execution"
+   - User: "타이어 공기압 체크는 어떻게 해?" -> asks HOW to check (a manual procedure), NOT the current
+     value -> next_agent: "knowledge", never plan: ["get_vehicle_status"]
    - User: "와이퍼가 작동이 안 돼" -> this is a malfunction report, NOT a command to turn the wiper on
      (Rule 3 applies instead) -> next_agent: "knowledge", never plan: ["control_wiper on=true"]
 5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
@@ -429,6 +452,27 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         )
         next_agent = "__end__"
         new_plan = []
+
+    # 안전장치(execution 경로, knowledge/perception 재호출 차단과 대칭): 직전에
+    # execution이 어떤 tool을 성공(status=success)으로 실행했는데, 모델이 또
+    # execution으로 — 그것도 같은 tool로(또는 새 tool을 특정하지 못한 채) —
+    # 위임하려 하면 무한루프다. get_vehicle_status가 매번 status=success를
+    # 반환하면 observe의 error_count가 안 올라 MAX_RETRY 백스톱도 안 걸려,
+    # recursion_limit까지 같은 tool을 반복 호출하는 런어웨이가 실측으로 확인됐다
+    # (예: "타이어 공기압 체크는 어떻게 해?"를 액션으로 오분류 → get_vehicle_status
+    # 10회 반복). 직전 성공 tool과 이번 위임 tool이 같으면 __end__로 강제 전환한다.
+    # tool이 다르면(멀티스텝 plan의 정당한 다음 단계) 막지 않는다.
+    if next_agent == "execution" and last_tool_call.get("status") == "success":
+        prev_tool = last_tool_call.get("tool", "")
+        intended_tool = _plan_tool_name(new_plan)
+        if prev_tool and (not intended_tool or intended_tool == prev_tool):
+            logger.warning(
+                "supervisor_node: execution 재호출 차단(직전 tool=%r 성공, 재위임 tool=%r) "
+                "— 동일 tool 반복 무한루프 방지, __end__ 로 강제 전환",
+                prev_tool, intended_tool or "(미지정)",
+            )
+            next_agent = "__end__"
+            new_plan = []
 
     # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
