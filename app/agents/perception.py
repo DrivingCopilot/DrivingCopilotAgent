@@ -50,69 +50,61 @@ _KNOWN_HAZARDS = tuple(HAZARD_PLAN_STEPS.keys())
 
 class PerceptionVisionResult(BaseModel):
     """
-    Vision LLM의 JSON 응답을 검증한다. hazards/related_hazard는 프롬프트로만
-    강제되므로(백엔드가 Ollama든 Colab HF-transformers 서버든 동일하게 동작해야
-    해 grammar-constrained decoding은 쓰지 않음), 모델이 어휘 밖의 값을 내도
-    예외 대신 조용히 걸러내도록 validator로 검증한다.
+    Vision LLM의 JSON 응답을 검증한다.
+
+    설계 노트: 이전엔 "사용자 질문이 rain/tunnel/warning_light 중 하나에 대한
+    것인가"를 VLM 스스로 판단하는 related_hazard 필드가 있었으나, 작은 VLM이
+    이 조건부 분류를 신뢰성 있게 못 해서(few-shot을 넣어도 개선 안 됨 — 실측
+    확인) 제거했다. 지금은 역할을 둘로 완전히 분리한다:
+      - hazards: 화면에 실제로 뭐가 보이는지만 판단(질문과 무관, 자동 안전
+        트리거 입력) — 이 부분은 원래도 신뢰도가 괜찮았다.
+      - answer: 질문이 있으면 무조건 직접 답변(조건부 분류 없이 항상 채움).
+    supervisor.py는 hazards로 매칭 여부를 재판단하지 않고 answer를 그대로
+    신뢰한다.
     """
 
+    answer: str = ""
     description: str = ""
     hazards: List[str] = []
-    related_hazard: Optional[str] = None
-    answer: str = ""
 
     @field_validator("hazards")
     @classmethod
     def _filter_unknown_hazards(cls, v: List[str]) -> List[str]:
         return [h for h in v if h in _KNOWN_HAZARDS]
 
-    @field_validator("related_hazard")
-    @classmethod
-    def _validate_related_hazard(cls, v: Optional[str]) -> Optional[str]:
-        return v if v in _KNOWN_HAZARDS else None
-
 
 def _build_vision_prompt(user_question: str) -> str:
     """
     Vision LLM 프롬프트를 조립한다. 사용자 질문이 있으면 그 질문을 실제로 VLM에
-    전달하고, 3종 hazard 어휘(rain/tunnel/warning_light) 중 하나에 대한 질문인지
-    VLM 스스로 판단(related_hazard)하게 한다 — supervisor.py가 사용자 질문 텍스트를
-    별도로 키워드 매칭하지 않도록 하기 위함.
+    전달해 answer 필드에 조건 없이 직접 답변하게 한다 — "이 질문이 어떤 hazard
+    범주에 속하는가" 같은 메타 분류는 더 이상 요구하지 않는다(모델이 그 판단을
+    못 해서 화면의 hazard를 질문과 무관하게 반사적으로 확답해버리는 문제가
+    있었음). answer를 JSON 첫 필드로 둔 것도 의도적 — 모델이 판단/묘사부터
+    하고 답변을 뒷전으로 미루는 경향이 있어, 질문에 먼저 답하도록 순서로 유도.
     """
     base = (
         "당신은 차량 카메라 영상을 분석하는 비전 어시스턴트입니다. "
         "이 영상에서 날씨, 도로 상태, 위험 상황(보행자, 장애물, 경고등 등)을 분석하세요.\n\n"
     )
     question_part = (
-        f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n\n'
-        "related_hazard는 질문이 rain(비)/tunnel(터널)/warning_light(대시보드 경고등) "
-        "중 하나를 직접 묻는 경우에만 채우고, 그 외(도로 표지판, 속도, 날씨 전반, "
-        "잡담 등)에는 반드시 null로 두세요. answer는 related_hazard 값과 무관하게 "
-        "항상 채우세요 — related_hazard를 정했다고 answer를 비워두면 안 됩니다.\n\n"
-        "예시:\n"
-        '- 질문: "지금 비 와?" → related_hazard: "rain" (비를 직접 물음), '
-        'answer: "네, 비가 내리고 있습니다."\n'
-        '- 질문: "전방에 경고 표시판 있어?" → related_hazard: null '
-        '(도로 표지판은 대시보드 경고등이 아님), '
-        'answer: "네, 전방에 속도제한 표지판이 보입니다." (영상을 근거로 실제 답변)\n'
-        '- 질문: "오늘 날씨 어때?" → related_hazard: null '
-        '(rain/tunnel/warning_light 중 하나를 콕 집어 물은 게 아님), '
-        'answer: "비가 내리는 흐린 날씨입니다."\n\n'
+        f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n'
+        "이 질문이 무엇에 관한 것이든 상관없이(날씨, 표지판, 사람, 잡담 등) "
+        "영상을 근거로 answer 필드에 반드시 직접 답변하세요. 판단을 미루거나 "
+        "비워두지 마세요.\n\n"
         if user_question else ""
     )
     schema_part = (
         "다음 JSON 형식으로만 답하세요(다른 텍스트 없이):\n"
-        '{"description": "<한국어로 간결한 설명>", '
-        '"hazards": [<감지된 항목, "rain"|"tunnel"|"warning_light" 중에서만 선택. 없으면 빈 배열>], '
-        '"related_hazard": <"rain"|"tunnel"|"warning_light"|null>, '
-        '"answer": "<운전자 질문에 대한 한국어 직접 답변. 질문이 없으면 빈 문자열>"}'
+        '{"answer": "<운전자 질문에 대한 한국어 직접 답변. 질문이 없으면 빈 문자열>", '
+        '"description": "<한국어로 간결한 설명>", '
+        '"hazards": [<감지된 항목, "rain"|"tunnel"|"warning_light" 중에서만 선택. 없으면 빈 배열>]}'
     )
     return base + question_part + schema_part
 
 
 def _parse_vision_response(raw: str) -> PerceptionVisionResult:
     """
-    Vision LLM 응답에서 description/hazards/related_hazard/answer 를 추출한다.
+    Vision LLM 응답에서 answer/description/hazards 를 추출한다.
     구조화 JSON 파싱/검증에 실패하면 원본 텍스트를 description으로, 나머지는
     빈 값으로 폴백한다 (기존 자유 텍스트 응답과의 하위호환).
     """
@@ -237,8 +229,8 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
     plan_steps = [HAZARD_PLAN_STEPS[h] for h in result.hazards]
 
     logger.info(
-        "perception_node 완료: description=%r hazards=%s related_hazard=%s answer=%r plan=%s",
-        result.description, result.hazards, result.related_hazard, result.answer, plan_steps,
+        "perception_node 완료: description=%r hazards=%s answer=%r plan=%s",
+        result.description, result.hazards, result.answer, plan_steps,
     )
 
     return {
@@ -248,7 +240,6 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
                 "status": "success",
                 "description": result.description,
                 "hazards": result.hazards,
-                "related_hazard": result.related_hazard,
                 "answer": result.answer,
             },
         },

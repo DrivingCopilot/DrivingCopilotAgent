@@ -41,10 +41,8 @@ def _get_entity_memory():
 _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 
 # perception.py의 HAZARD_PLAN_STEPS와 동일한 controlled vocabulary에 대한
-# 사용자 안내용 한국어 라벨. _compose_vision_summary 가 최종 답변 생성에 사용한다.
-# "사용자 질문이 어떤 hazard에 대한 것인가"는 더 이상 여기서 텍스트 키워드로
-# 추측하지 않는다 — perception.py의 VLM이 이미지와 질문을 함께 보고
-# vision_results["related_hazard"]로 직접 판단해서 넘겨준다.
+# 사용자 안내용 한국어 라벨. _compose_vision_summary가 answer 없이 hazards만
+# 있는 경우(질문 없는 자동 트리거 등)의 통보 문구에 사용한다.
 HAZARD_LABELS: Dict[str, str] = {
     "rain": "비",
     "tunnel": "터널",
@@ -103,35 +101,22 @@ def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
 def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
-    "사용자 질문이 rain/tunnel/warning_light 중 하나에 대한 것인가"는 이미지와
-    질문을 함께 본 perception.py의 VLM이 related_hazard로 이미 판단해 넘겨준다 —
-    여기서 사용자 질문 텍스트를 다시 키워드로 매칭하지 않는다(그 방식은 "경고
-    표시판"처럼 정해둔 키워드 밖의 표현을 놓치는 문제가 있었음).
-    related_hazard가 없는 질문(hazard 어휘 밖의 질문)은 VLM이 이미지+질문을 보고
-    직접 작성한 answer를 그대로 신뢰한다.
+
+    설계 노트: 이전엔 "사용자 질문이 rain/tunnel/warning_light 중 하나에 대한
+    것인가"를 VLM이 related_hazard로 직접 판단해서 넘기면 그걸로 결정론적
+    네/아니요 템플릿을 골랐는데, 작은 VLM이 이 메타 분류를 신뢰성 있게 못 해서
+    (질문과 무관하게 화면의 hazard를 반사적으로 확답해버림 — few-shot으로도
+    개선 안 됨, 실측 확인) perception.py에서 related_hazard 필드 자체를
+    없앴다. 지금은 hazards(화면 기반, 질문과 무관)로 재판단하지 않고 VLM의
+    answer를 그대로 신뢰한다 — perception.py가 질문이 있으면 항상 answer를
+    채우도록 프롬프트를 단순화했다.
     """
     if vision_results.get("status") != "success":
         return f"카메라 분석에 실패했습니다: {vision_results.get('error_msg', '알 수 없는 오류')}"
 
     hazards = vision_results.get("hazards", [])
     description = vision_results.get("description", "")
-    related_hazard = vision_results.get("related_hazard")
     answer = vision_results.get("answer", "")
-
-    # 안전장치: related_hazard는 채웠는데 answer가 비어있다면, VLM이 프롬프트
-    # 지시("related_hazard와 무관하게 answer는 항상 채워라")를 못 따른 것이라
-    # related_hazard 판단 자체도 신뢰하기 어렵다(실측 사례: "경고 표시판 있어?"
-    # 질문에 related_hazard="rain", answer=""로 응답). hazard 통보 fallback도
-    # 화면의 hazard를 질문과 무관하게 반사적으로 보여줄 위험이 같아서 같이
-    # 건너뛰고, 최소한 사실인 description만 노출한다.
-    if related_hazard and not answer:
-        return description
-
-    if related_hazard:
-        label = HAZARD_LABELS[related_hazard]
-        if related_hazard in hazards:
-            return f"네, {label}가 감지되었습니다. (카메라 상황: {description})"
-        return f"아니요, {label}는 감지되지 않았습니다. (카메라 상황: {description})"
 
     if answer:
         return answer

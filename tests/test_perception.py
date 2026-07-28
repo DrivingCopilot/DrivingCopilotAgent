@@ -196,7 +196,6 @@ class TestPerceptionNode:
         assert vision_results["description"] == "비가 내리고 도로가 젖어있습니다."
         assert vision_results["hazards"] == []
         assert vision_results["answer"] == ""
-        assert vision_results["related_hazard"] is None
         assert result["plan"] == []
 
     async def test_unknown_hazard_value_is_filtered_out(self):
@@ -263,8 +262,8 @@ class TestPerceptionNode:
         """messages의 최신 HumanMessage가 VLM 프롬프트에 실제로 포함되어야 한다."""
         mock_response = MagicMock()
         mock_response.content = (
-            '{"description": "표지판이 보입니다.", "hazards": [], '
-            '"related_hazard": null, "answer": "전방 표지판은 속도제한 50입니다."}'
+            '{"answer": "전방 표지판은 속도제한 50입니다.", '
+            '"description": "표지판이 보입니다.", "hazards": []}'
         )
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -289,13 +288,12 @@ class TestPerceptionNode:
 
         vision_results = result["context_data"]["vision_results"]
         assert vision_results["answer"] == "전방 표지판은 속도제한 50입니다."
-        assert vision_results["related_hazard"] is None
 
-    async def test_related_hazard_confirms_detected_hazard(self):
-        """VLM이 related_hazard를 rain으로 판단하면 vision_results에 그대로 반영된다."""
+    async def test_answer_and_hazards_reflected_for_hazard_question(self):
+        """hazard 관련 질문이어도 answer/hazards가 그대로 vision_results에 반영된다."""
         vision_json = (
-            '{"description": "비가 내리고 있습니다.", "hazards": ["rain"], '
-            '"related_hazard": "rain", "answer": "네, 비가 옵니다."}'
+            '{"answer": "네, 비가 옵니다.", '
+            '"description": "비가 내리고 있습니다.", "hazards": ["rain"]}'
         )
         with (
             patch(
@@ -312,11 +310,11 @@ class TestPerceptionNode:
             result = await perception_node(state)
 
         vision_results = result["context_data"]["vision_results"]
-        assert vision_results["related_hazard"] == "rain"
+        assert vision_results["hazards"] == ["rain"]
         assert vision_results["answer"] == "네, 비가 옵니다."
 
-    async def test_no_question_answer_and_related_hazard_default_empty(self):
-        """messages에 질문이 없으면(자동 트리거 등) answer/related_hazard는 빈 값으로 폴백한다."""
+    async def test_no_question_answer_defaults_to_empty(self):
+        """messages에 질문이 없으면(자동 트리거 등) answer는 빈 값으로 폴백한다."""
         vision_json = '{"description": "맑은 날씨입니다.", "hazards": []}'
         with (
             patch(
@@ -333,7 +331,6 @@ class TestPerceptionNode:
 
         vision_results = result["context_data"]["vision_results"]
         assert vision_results["answer"] == ""
-        assert vision_results["related_hazard"] is None
 
 
 class TestSanityCheckHazards:
@@ -366,45 +363,42 @@ class TestBuildVisionPrompt:
 
         assert "운전자가 다음과 같이 질문했습니다" not in _build_vision_prompt("")
 
-    def test_includes_few_shot_examples_when_question_present(self):
+    def test_instructs_always_answer_when_question_present(self):
         """
-        related_hazard 오판정(hazard 어휘 밖 질문에도 반사적으로 채우는 문제)을
-        줄이기 위해 넣은 few-shot 예시가 실제로 프롬프트에 포함되는지 확인.
-        (실측 결과 이 few-shot만으로는 오판정이 완전히 사라지지 않았지만,
-        프롬프트에 의도대로 들어가는지는 별개로 검증할 가치가 있다.)
+        related_hazard 메타 분류를 없앤 대신, 질문이 있으면 무조건 answer를
+        채우라는 지시가 프롬프트에 들어가는지 확인 (관련 없는 질문이어도
+        판단을 미루지 말라는 지시 — 실측으로 few-shot은 효과 없었음을 확인
+        후, 조건부 분류 자체를 제거하는 쪽으로 방향을 바꿨다).
         """
         from app.agents.perception import _build_vision_prompt
 
         prompt = _build_vision_prompt("전방에 경고 표지판 있어?")
-        assert "전방에 경고 표시판 있어" in prompt or "경고 표시판" in prompt
-        assert "related_hazard: null" in prompt
+        assert "전방에 경고 표지판 있어?" in prompt
+        assert "반드시 직접 답변" in prompt
+        assert "related_hazard" not in prompt
+
+    def test_schema_lists_answer_before_description(self):
+        """answer를 JSON 첫 필드로 둬서 모델이 판단보다 답변을 먼저 하도록 유도한다."""
+        from app.agents.perception import _build_vision_prompt
+
+        prompt = _build_vision_prompt("아무 질문")
+        assert prompt.index('"answer"') < prompt.index('"description"')
 
 
 class TestParseVisionResponse:
-    def test_parses_answer_and_related_hazard_fields(self):
+    def test_parses_answer_field(self):
         from app.agents.perception import _parse_vision_response
 
         result = _parse_vision_response(
-            '{"description": "맑음", "hazards": [], '
-            '"related_hazard": null, "answer": "표지판은 A입니다."}'
+            '{"answer": "표지판은 A입니다.", "description": "맑음", "hazards": []}'
         )
         assert result.answer == "표지판은 A입니다."
-        assert result.related_hazard is None
 
     def test_missing_fields_default_to_empty(self):
         from app.agents.perception import _parse_vision_response
 
         result = _parse_vision_response('{"description": "맑음", "hazards": []}')
         assert result.answer == ""
-        assert result.related_hazard is None
-
-    def test_unknown_related_hazard_value_is_filtered_to_none(self):
-        from app.agents.perception import _parse_vision_response
-
-        result = _parse_vision_response(
-            '{"description": "안개", "hazards": [], "related_hazard": "fog"}'
-        )
-        assert result.related_hazard is None
 
     def test_non_json_fallback_returns_empty_answer(self):
         from app.agents.perception import _parse_vision_response

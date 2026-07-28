@@ -85,7 +85,6 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
-                    "related_hazard": "rain",
                     "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
@@ -152,7 +151,6 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "비가 내리고 있습니다.",
                     "hazards": ["rain"],
-                    "related_hazard": "rain",
                     "answer": "네, 비가 내리고 있습니다.",
                 }
             },
@@ -194,7 +192,6 @@ class TestSupervisorNode:
                     "status": "success",
                     "description": "맑은 날씨입니다.",
                     "hazards": [],
-                    "related_hazard": "rain",
                     "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
@@ -307,76 +304,48 @@ class TestComposeToolResultSummary:
 class TestComposeVisionSummary:
     """
     vision_results로부터 최종 답변을 구성하는 _compose_vision_summary 검증.
-    related_hazard는 perception.py의 VLM이 이미지+질문을 보고 직접 판단해
-    vision_results에 채워 넣는 값이라, 여기서는 텍스트 키워드 매칭 없이 그
-    값을 그대로 신뢰해야 한다.
+    이전엔 related_hazard(사용자 질문이 rain/tunnel/warning_light 중 하나에
+    대한 것인가)를 VLM이 직접 판단해서 넘기면 그걸로 결정론적 네/아니요
+    템플릿을 골랐는데, 작은 VLM이 이 메타 분류를 못 해서(few-shot으로도
+    개선 안 됨) related_hazard 필드 자체를 없앴다. 지금은 answer가 있으면
+    hazard 질문이든 아니든 그대로 신뢰한다.
     """
 
-    def test_related_hazard_present_and_detected_confirms_yes(self):
+    def test_answer_present_is_used_directly_regardless_of_hazard_match(self):
+        """hazard 질문에 대한 answer("네"/"아니요" 포함)도 그대로 통과시킨다."""
         from app.agents.supervisor import _compose_vision_summary
 
-        vision_results = {
+        yes_case = {
             "status": "success",
             "description": "비가 내리고 있습니다.",
             "hazards": ["rain"],
-            "related_hazard": "rain",
             "answer": "네, 비가 내리고 있습니다.",
         }
-        result = _compose_vision_summary(vision_results)
-        assert "네" in result
-        assert "비" in result
+        assert _compose_vision_summary(yes_case) == "네, 비가 내리고 있습니다."
 
-    def test_related_hazard_present_but_not_detected_confirms_no(self):
-        from app.agents.supervisor import _compose_vision_summary
-
-        vision_results = {
+        no_case = {
             "status": "success",
             "description": "맑은 날씨입니다.",
             "hazards": [],
-            "related_hazard": "rain",
             "answer": "아니요, 비가 오지 않습니다.",
         }
-        result = _compose_vision_summary(vision_results)
-        assert "아니요" in result
-        assert "비" in result
+        assert _compose_vision_summary(no_case) == "아니요, 비가 오지 않습니다."
 
-    def test_related_hazard_present_but_answer_empty_falls_back_to_description(self):
-        """
-        회귀 테스트: related_hazard는 채웠는데 answer가 비어있으면(실측된 VLM
-        오판정 패턴 — "경고 표시판 있어?"에 related_hazard="rain", answer=""로
-        응답) related_hazard 판정 자체를 신뢰하지 않고 description을 그대로
-        노출한다. "네/아니요" 확답이나 hazard 통보 fallback 모두 건너뛴다.
-        """
-        from app.agents.supervisor import _compose_vision_summary
-
-        vision_results = {
-            "status": "success",
-            "description": "우산을 쓴 운전자가 눈이 내리는 숲길을 달리고 있습니다.",
-            "hazards": [],
-            "related_hazard": "rain",
-            "answer": "",
-        }
-        result = _compose_vision_summary(vision_results)
-        assert result == "우산을 쓴 운전자가 눈이 내리는 숲길을 달리고 있습니다."
-        assert "네" not in result
-        assert "아니요" not in result
-
-    def test_no_related_hazard_uses_vlm_answer(self):
-        """3종 hazard 어휘 밖의 질문(예: 도로 표지판)은 VLM이 직접 작성한 answer를 그대로 쓴다."""
+    def test_answer_present_is_used_for_non_hazard_question(self):
+        """3종 hazard 어휘 밖의 질문(예: 도로 표지판)도 VLM이 직접 작성한 answer를 그대로 쓴다."""
         from app.agents.supervisor import _compose_vision_summary
 
         vision_results = {
             "status": "success",
             "description": "도로에 속도제한 50 표지판이 보입니다.",
             "hazards": [],
-            "related_hazard": None,
             "answer": "전방 표지판은 속도제한 50 표지판입니다.",
         }
         result = _compose_vision_summary(vision_results)
         assert result == "전방 표지판은 속도제한 50 표지판입니다."
 
-    def test_no_related_hazard_and_no_answer_falls_back_to_hazard_summary(self):
-        """answer가 없는(구버전 vision_results 등) 경우 기존 hazard 통보 fallback으로 떨어진다."""
+    def test_no_answer_falls_back_to_hazard_summary(self):
+        """answer가 없는 경우(질문 없는 자동 트리거 등) hazard 통보 fallback으로 떨어진다."""
         from app.agents.supervisor import _compose_vision_summary
 
         vision_results = {
@@ -463,7 +432,6 @@ class TestSupervisorFinalTextPriority:
                     "status": "success",
                     "description": "도로에 속도제한 50 표지판이 보입니다.",
                     "hazards": [],
-                    "related_hazard": None,
                     "answer": "전방 표지판은 속도제한 50 표지판입니다.",
                 }
             },
