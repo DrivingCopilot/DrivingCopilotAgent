@@ -83,7 +83,6 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "맑은 날씨입니다.",
                     "hazards": [],
                     "answer": "아니요, 비가 오지 않습니다.",
                 }
@@ -149,7 +148,6 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "비가 내리고 있습니다.",
                     "hazards": ["rain"],
                     "answer": "네, 비가 내리고 있습니다.",
                 }
@@ -190,7 +188,6 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "맑은 날씨입니다.",
                     "hazards": [],
                     "answer": "아니요, 비가 오지 않습니다.",
                 }
@@ -317,7 +314,6 @@ class TestComposeVisionSummary:
 
         yes_case = {
             "status": "success",
-            "description": "비가 내리고 있습니다.",
             "hazards": ["rain"],
             "answer": "네, 비가 내리고 있습니다.",
         }
@@ -325,7 +321,6 @@ class TestComposeVisionSummary:
 
         no_case = {
             "status": "success",
-            "description": "맑은 날씨입니다.",
             "hazards": [],
             "answer": "아니요, 비가 오지 않습니다.",
         }
@@ -337,7 +332,6 @@ class TestComposeVisionSummary:
 
         vision_results = {
             "status": "success",
-            "description": "도로에 속도제한 50 표지판이 보입니다.",
             "hazards": [],
             "answer": "전방 표지판은 속도제한 50 표지판입니다.",
         }
@@ -350,7 +344,6 @@ class TestComposeVisionSummary:
 
         vision_results = {
             "status": "success",
-            "description": "터널 안입니다.",
             "hazards": ["tunnel"],
         }
         result = _compose_vision_summary(vision_results)
@@ -360,7 +353,7 @@ class TestComposeVisionSummary:
     def test_no_hazard_no_answer_reports_no_risk(self):
         from app.agents.supervisor import _compose_vision_summary
 
-        vision_results = {"status": "success", "description": "맑음", "hazards": []}
+        vision_results = {"status": "success", "hazards": []}
         result = _compose_vision_summary(vision_results)
         assert "감지되지 않았습니다" in result
 
@@ -430,7 +423,6 @@ class TestSupervisorFinalTextPriority:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "도로에 속도제한 50 표지판이 보입니다.",
                     "hazards": [],
                     "answer": "전방 표지판은 속도제한 50 표지판입니다.",
                 }

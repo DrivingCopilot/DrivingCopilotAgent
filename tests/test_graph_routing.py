@@ -118,7 +118,7 @@ async def test_react_one_loop_perception(patch_supervisor):
     # plan을 채워 route_after_perception이 execution으로 직행시켜 tracker count가 깨진다.
     mock_vlm_response = MagicMock()
     mock_vlm_response.content = (
-        '{"description": "전방 도로가 맑고 특이사항 없습니다.", "hazards": []}'
+        '{"answer": "전방 도로가 맑고 특이사항 없습니다.", "hazards": []}'
     )
     mock_vlm = MagicMock()
     mock_vlm.ainvoke = AsyncMock(return_value=mock_vlm_response)
@@ -142,7 +142,7 @@ async def test_react_one_loop_perception(patch_supervisor):
     assert "vision_results" in result["context_data"]
     vision = result["context_data"]["vision_results"]
     assert vision["status"] == "success"
-    assert "description" in vision
+    assert vision["answer"] == "전방 도로가 맑고 특이사항 없습니다."
     assert "hazards" in vision
     assert vision["hazards"] == []
 

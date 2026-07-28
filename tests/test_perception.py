@@ -51,7 +51,7 @@ def _mock_vision_llm(response_content: str):
 
 
 class TestPerceptionNode:
-    async def test_success_returns_vision_description(self):
+    async def test_success_returns_vision_answer(self):
         """camera_feed 성공 + VLM 정상 응답 → vision_results.status='success'."""
         with (
             patch(
@@ -68,7 +68,7 @@ class TestPerceptionNode:
 
         vision_results = result["context_data"]["vision_results"]
         assert vision_results["status"] == "success"
-        assert "비" in vision_results["description"]
+        assert "비" in vision_results["answer"]
 
     async def test_camera_frame_fetch_fail_skips_vlm_call(self):
         """camera_feed 조회 실패 시 VLM 을 호출하지 않고 fail 상태를 반환한다."""
@@ -137,7 +137,7 @@ class TestPerceptionNode:
 
     async def test_hazard_detected_fills_plan_for_auto_trigger(self):
         """비/터널/경고등 hazard가 JSON으로 감지되면 plan에 대응 조치가 채워진다."""
-        vision_json = '{"description": "비가 내리고 있습니다.", "hazards": ["rain"]}'
+        vision_json = '{"answer": "네, 비가 내리고 있습니다.", "hazards": ["rain"]}'
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -154,13 +154,13 @@ class TestPerceptionNode:
         vision_results = result["context_data"]["vision_results"]
         assert vision_results["status"] == "success"
         assert vision_results["hazards"] == ["rain"]
-        assert vision_results["description"] == "비가 내리고 있습니다."
+        assert vision_results["answer"] == "네, 비가 내리고 있습니다."
         assert len(result["plan"]) == 1
         assert "control_wiper" in result["plan"][0]
 
     async def test_no_hazard_returns_empty_plan(self):
         """hazard가 감지되지 않으면 plan은 빈 리스트로 명시된다 (stale plan 정리)."""
-        vision_json = '{"description": "맑은 날씨입니다.", "hazards": []}'
+        vision_json = '{"answer": "맑은 날씨입니다.", "hazards": []}'
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -177,8 +177,8 @@ class TestPerceptionNode:
         assert result["plan"] == []
         assert result["context_data"]["vision_results"]["hazards"] == []
 
-    async def test_unstructured_response_falls_back_to_plain_description(self):
-        """JSON이 아닌 자유 텍스트 응답도 description으로 안전하게 폴백한다 (하위호환)."""
+    async def test_unstructured_response_falls_back_to_plain_answer(self):
+        """JSON이 아닌 자유 텍스트 응답도 answer로 안전하게 폴백한다 (하위호환)."""
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -193,14 +193,13 @@ class TestPerceptionNode:
             result = await perception_node(_make_state())
 
         vision_results = result["context_data"]["vision_results"]
-        assert vision_results["description"] == "비가 내리고 도로가 젖어있습니다."
+        assert vision_results["answer"] == "비가 내리고 도로가 젖어있습니다."
         assert vision_results["hazards"] == []
-        assert vision_results["answer"] == ""
         assert result["plan"] == []
 
     async def test_unknown_hazard_value_is_filtered_out(self):
         """controlled vocabulary 밖의 hazard 값은 무시되고 plan에 포함되지 않는다."""
-        vision_json = '{"description": "안개가 보입니다.", "hazards": ["fog"]}'
+        vision_json = '{"answer": "안개가 보입니다.", "hazards": ["fog"]}'
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -262,8 +261,7 @@ class TestPerceptionNode:
         """messages의 최신 HumanMessage가 VLM 프롬프트에 실제로 포함되어야 한다."""
         mock_response = MagicMock()
         mock_response.content = (
-            '{"answer": "전방 표지판은 속도제한 50입니다.", '
-            '"description": "표지판이 보입니다.", "hazards": []}'
+            '{"answer": "전방 표지판은 속도제한 50입니다.", "hazards": []}'
         )
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -291,10 +289,7 @@ class TestPerceptionNode:
 
     async def test_answer_and_hazards_reflected_for_hazard_question(self):
         """hazard 관련 질문이어도 answer/hazards가 그대로 vision_results에 반영된다."""
-        vision_json = (
-            '{"answer": "네, 비가 옵니다.", '
-            '"description": "비가 내리고 있습니다.", "hazards": ["rain"]}'
-        )
+        vision_json = '{"answer": "네, 비가 옵니다.", "hazards": ["rain"]}'
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -315,7 +310,7 @@ class TestPerceptionNode:
 
     async def test_no_question_answer_defaults_to_empty(self):
         """messages에 질문이 없으면(자동 트리거 등) answer는 빈 값으로 폴백한다."""
-        vision_json = '{"description": "맑은 날씨입니다.", "hazards": []}'
+        vision_json = '{"answer": "", "hazards": []}'
         with (
             patch(
                 "app.agents.perception.call_mcp_tool_once",
@@ -334,14 +329,14 @@ class TestPerceptionNode:
 
 
 class TestSanityCheckHazards:
-    """description과 hazards가 모순될 때 _sanity_check_hazards가 걸러내는지 검증."""
+    """answer 텍스트와 hazards가 모순될 때 _sanity_check_hazards가 걸러내는지 검증."""
 
-    def test_removes_rain_when_description_says_clear(self):
+    def test_removes_rain_when_answer_says_clear(self):
         from app.agents.perception import _sanity_check_hazards
 
         assert _sanity_check_hazards("맑고 화창합니다.", ["rain"]) == []
 
-    def test_keeps_rain_when_description_is_consistent(self):
+    def test_keeps_rain_when_answer_is_consistent(self):
         from app.agents.perception import _sanity_check_hazards
 
         assert _sanity_check_hazards("비가 내리고 있습니다.", ["rain"]) == ["rain"]
@@ -358,10 +353,13 @@ class TestBuildVisionPrompt:
 
         assert "전방 경고 표시판이 뭐야?" in _build_vision_prompt("전방 경고 표시판이 뭐야?")
 
-    def test_omits_question_section_when_absent(self):
+    def test_handles_empty_question_without_crashing(self):
+        """perception은 항상 질문과 함께 호출되지만(그래프상 무질문 경로 없음),
+        방어적으로 빈 문자열이 와도 프롬프트 조립이 에러 없이 동작해야 한다."""
         from app.agents.perception import _build_vision_prompt
 
-        assert "운전자가 다음과 같이 질문했습니다" not in _build_vision_prompt("")
+        prompt = _build_vision_prompt("")
+        assert '"answer"' in prompt
 
     def test_instructs_always_answer_when_question_present(self):
         """
@@ -374,36 +372,34 @@ class TestBuildVisionPrompt:
 
         prompt = _build_vision_prompt("전방에 경고 표지판 있어?")
         assert "전방에 경고 표지판 있어?" in prompt
-        assert "반드시 직접 답변" in prompt
+        assert "직접 답변하세요" in prompt
         assert "related_hazard" not in prompt
 
-    def test_schema_lists_answer_before_description(self):
-        """answer를 JSON 첫 필드로 둬서 모델이 판단보다 답변을 먼저 하도록 유도한다."""
+    def test_instructs_complete_sentence_answer(self):
+        """부정 답변("없습니다" 한 단어)을 줄이기 위해 완전한 문장 지시가 들어가는지 확인."""
         from app.agents.perception import _build_vision_prompt
 
         prompt = _build_vision_prompt("아무 질문")
-        assert prompt.index('"answer"') < prompt.index('"description"')
+        assert "완전한 문장" in prompt
+        assert '"description"' not in prompt
 
 
 class TestParseVisionResponse:
     def test_parses_answer_field(self):
         from app.agents.perception import _parse_vision_response
 
-        result = _parse_vision_response(
-            '{"answer": "표지판은 A입니다.", "description": "맑음", "hazards": []}'
-        )
+        result = _parse_vision_response('{"answer": "표지판은 A입니다.", "hazards": []}')
         assert result.answer == "표지판은 A입니다."
 
     def test_missing_fields_default_to_empty(self):
         from app.agents.perception import _parse_vision_response
 
-        result = _parse_vision_response('{"description": "맑음", "hazards": []}')
+        result = _parse_vision_response('{"hazards": []}')
         assert result.answer == ""
 
-    def test_non_json_fallback_returns_empty_answer(self):
+    def test_non_json_fallback_returns_raw_text_as_answer(self):
         from app.agents.perception import _parse_vision_response
 
         result = _parse_vision_response("자유 텍스트 응답")
-        assert result.answer == ""
-        assert result.description == "자유 텍스트 응답"
+        assert result.answer == "자유 텍스트 응답"
         assert result.hazards == []

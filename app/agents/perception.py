@@ -6,7 +6,7 @@
 #     supervisor (next_agent=perception) → perception_node(state)
 #         ├ Backend MCP 의 get_camera_frame 으로 카메라 프레임(base64 JPEG) 조회
 #         ├ 프레임을 멀티모달 메시지로 감싸 Vision LLM(Qwen2-VL 7B FP16) 호출
-#         ├ 응답을 description/hazards 로 구조화 파싱
+#         ├ 응답을 answer/hazards 로 구조화 파싱
 #         └ 분석 결과를 context_data.vision_results 에 담아 supervisor 로 복귀
 #             (hazard 감지 시 plan 에 자동 대응 조치를 채워 execution 으로 직행 — 아래 참고)
 #
@@ -52,19 +52,19 @@ class PerceptionVisionResult(BaseModel):
     """
     Vision LLM의 JSON 응답을 검증한다.
 
-    설계 노트: 이전엔 "사용자 질문이 rain/tunnel/warning_light 중 하나에 대한
-    것인가"를 VLM 스스로 판단하는 related_hazard 필드가 있었으나, 작은 VLM이
-    이 조건부 분류를 신뢰성 있게 못 해서(few-shot을 넣어도 개선 안 됨 — 실측
-    확인) 제거했다. 지금은 역할을 둘로 완전히 분리한다:
+    설계 노트: 원래는 description(항상 채우는 일반 장면 묘사)과 answer(질문이
+    있을 때만 채우는 직접 답변)를 분리했었는데, 그러다 보니 모델이 부정적인
+    답("표지판이 없습니다" 등)을 description에만 쓰고 answer는 비워버리는
+    문제가 실측으로 확인됐다(두 필드가 겹치니 모델이 하나만 쓰고 만 것으로
+    보임). 지금은 필드를 answer 하나로 합쳐서 이 중복 자체를 없앴다 — perception
+    노드는 항상 사용자 질문에 응답해서 호출되므로(질문 없이 호출되는 경로는
+    없음) answer는 항상 채워지는 것을 전제로 한다.
+      - answer: 질문에 대한 직접 답변(항상 채움).
       - hazards: 화면에 실제로 뭐가 보이는지만 판단(질문과 무관, 자동 안전
-        트리거 입력) — 이 부분은 원래도 신뢰도가 괜찮았다.
-      - answer: 질문이 있으면 무조건 직접 답변(조건부 분류 없이 항상 채움).
-    supervisor.py는 hazards로 매칭 여부를 재판단하지 않고 answer를 그대로
-    신뢰한다.
+        트리거 입력) — 원래도 신뢰도가 괜찮았던 부분이라 그대로 유지.
     """
 
     answer: str = ""
-    description: str = ""
     hazards: List[str] = []
 
     @field_validator("hazards")
@@ -75,60 +75,51 @@ class PerceptionVisionResult(BaseModel):
 
 def _build_vision_prompt(user_question: str) -> str:
     """
-    Vision LLM 프롬프트를 조립한다. 사용자 질문이 있으면 그 질문을 실제로 VLM에
-    전달해 answer 필드에 조건 없이 직접 답변하게 한다 — "이 질문이 어떤 hazard
-    범주에 속하는가" 같은 메타 분류는 더 이상 요구하지 않는다(모델이 그 판단을
-    못 해서 화면의 hazard를 질문과 무관하게 반사적으로 확답해버리는 문제가
-    있었음). answer를 JSON 첫 필드로 둔 것도 의도적 — 모델이 판단/묘사부터
-    하고 답변을 뒷전으로 미루는 경향이 있어, 질문에 먼저 답하도록 순서로 유도.
+    Vision LLM 프롬프트를 조립한다. perception은 항상 사용자 질문에 응답해서
+    호출되므로 answer는 항상 채우는 것을 전제로 지시한다. "완전한 문장으로"를
+    넣은 건 부정 답변("없습니다"처럼 한 단어로만 끝내는 경향)을 조금이라도
+    완화하기 위함 — 실측 결과 완전히 없어지진 않았지만(그래도 문법적으론
+    완결된 문장), 최소한 답이 아예 비는 문제는 이 필드 통합으로 해결됨.
     """
-    base = (
+    return (
         "당신은 차량 카메라 영상을 분석하는 비전 어시스턴트입니다. "
         "이 영상에서 날씨, 도로 상태, 위험 상황(보행자, 장애물, 경고등 등)을 분석하세요.\n\n"
-    )
-    question_part = (
         f'운전자가 다음과 같이 질문했습니다: "{user_question}"\n'
         "이 질문이 무엇에 관한 것이든 상관없이(날씨, 표지판, 사람, 잡담 등) "
-        "영상을 근거로 answer 필드에 반드시 직접 답변하세요. 판단을 미루거나 "
-        "비워두지 마세요.\n\n"
-        if user_question else ""
-    )
-    schema_part = (
+        "영상을 근거로 answer 필드에 완전한 문장으로 직접 답변하세요. "
+        "'없습니다'/'아닙니다' 같은 부정적인 답이어도 반드시 완전한 문장으로 "
+        "채우세요. 판단을 미루거나 비워두지 마세요.\n\n"
         "다음 JSON 형식으로만 답하세요(다른 텍스트 없이):\n"
-        '{"answer": "<운전자 질문에 대한 한국어 직접 답변. 질문이 없으면 빈 문자열>", '
-        '"description": "<한국어로 간결한 설명>", '
+        '{"answer": "<운전자 질문에 대한 완전한 한국어 문장 답변>", '
         '"hazards": [<감지된 항목, "rain"|"tunnel"|"warning_light" 중에서만 선택. 없으면 빈 배열>]}'
     )
-    return base + question_part + schema_part
 
 
 def _parse_vision_response(raw: str) -> PerceptionVisionResult:
     """
-    Vision LLM 응답에서 answer/description/hazards 를 추출한다.
-    구조화 JSON 파싱/검증에 실패하면 원본 텍스트를 description으로, 나머지는
-    빈 값으로 폴백한다 (기존 자유 텍스트 응답과의 하위호환).
+    Vision LLM 응답에서 answer/hazards 를 추출한다.
+    구조화 JSON 파싱/검증에 실패하면 원본 텍스트를 answer로, hazards는 빈
+    리스트로 폴백한다 (기존 자유 텍스트 응답과의 하위호환).
     """
     try:
         parsed = json.loads(extract_first_json_object(raw.strip()))
         result = PerceptionVisionResult.model_validate(parsed)
-        if not result.description:
-            result.description = raw
-        result.hazards = _sanity_check_hazards(result.description, result.hazards)
+        result.hazards = _sanity_check_hazards(result.answer, result.hazards)
         return result
     except (json.JSONDecodeError, AttributeError, TypeError, ValidationError):
-        return PerceptionVisionResult(description=raw)
+        return PerceptionVisionResult(answer=raw)
 
 
-# description(자유 텍스트)에 이 키워드가 있으면 VLM이 "위험 없음"이라고 서술한
+# answer(자유 텍스트)에 이 키워드가 있으면 VLM이 "위험 없음"이라고 서술한
 # 것으로 간주해, hazards에 그와 모순되는 항목이 남아있으면 제거한다. VLM
-# 환각(hallucination)에 대한 완벽한 해결책이 아니라 description과 hazards가
+# 환각(hallucination)에 대한 완벽한 해결책이 아니라 answer와 hazards가
 # 서로 명백히 모순되는 케이스만 걸러내는 규칙 기반 필터다.
 _CLEAR_WEATHER_KEYWORDS = ("맑", "화창", "clear", "비 안", "비가 안", "눈 안", "눈이 안")
 
 
-def _sanity_check_hazards(description: str, hazards: List[str]) -> List[str]:
-    """description이 명시적으로 맑은 날씨를 서술하면 hazards의 'rain'을 제거한다."""
-    if "rain" in hazards and any(kw in description for kw in _CLEAR_WEATHER_KEYWORDS):
+def _sanity_check_hazards(text: str, hazards: List[str]) -> List[str]:
+    """answer가 명시적으로 맑은 날씨를 서술하면 hazards의 'rain'을 제거한다."""
+    if "rain" in hazards and any(kw in text for kw in _CLEAR_WEATHER_KEYWORDS):
         return [h for h in hazards if h != "rain"]
     return hazards
 
@@ -229,8 +220,8 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
     plan_steps = [HAZARD_PLAN_STEPS[h] for h in result.hazards]
 
     logger.info(
-        "perception_node 완료: description=%r hazards=%s answer=%r plan=%s",
-        result.description, result.hazards, result.answer, plan_steps,
+        "perception_node 완료: hazards=%s answer=%r plan=%s",
+        result.hazards, result.answer, plan_steps,
     )
 
     return {
@@ -238,7 +229,6 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
             **context_data,
             "vision_results": {
                 "status": "success",
-                "description": result.description,
                 "hazards": result.hazards,
                 "answer": result.answer,
             },

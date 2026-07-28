@@ -102,20 +102,19 @@ def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
 
-    설계 노트: 이전엔 "사용자 질문이 rain/tunnel/warning_light 중 하나에 대한
-    것인가"를 VLM이 related_hazard로 직접 판단해서 넘기면 그걸로 결정론적
-    네/아니요 템플릿을 골랐는데, 작은 VLM이 이 메타 분류를 신뢰성 있게 못 해서
-    (질문과 무관하게 화면의 hazard를 반사적으로 확답해버림 — few-shot으로도
-    개선 안 됨, 실측 확인) perception.py에서 related_hazard 필드 자체를
-    없앴다. 지금은 hazards(화면 기반, 질문과 무관)로 재판단하지 않고 VLM의
-    answer를 그대로 신뢰한다 — perception.py가 질문이 있으면 항상 answer를
-    채우도록 프롬프트를 단순화했다.
+    설계 노트: perception.py는 description(항상 채우는 일반 묘사)과 answer
+    (질문이 있을 때만 채우는 답변)를 따로 뒀었는데, 두 필드가 겹치다 보니
+    VLM이 부정적인 답을 description에만 쓰고 answer는 비워버리는 문제가
+    실측으로 확인됐다. 지금은 perception.py가 answer 하나로 필드를 합쳐서
+    (perception은 항상 사용자 질문에 응답해서 호출되므로 answer가 항상
+    채워지는 것을 전제로 함) 이 문제를 없앴다 — 여기서는 그 answer를 그대로
+    신뢰한다. hazards만 있고 answer가 없는 경우(이례적인 폴백)만 hazard
+    통보 문구로 대체한다.
     """
     if vision_results.get("status") != "success":
         return f"카메라 분석에 실패했습니다: {vision_results.get('error_msg', '알 수 없는 오류')}"
 
     hazards = vision_results.get("hazards", [])
-    description = vision_results.get("description", "")
     answer = vision_results.get("answer", "")
 
     if answer:
@@ -123,9 +122,9 @@ def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
 
     if hazards:
         labels = ", ".join(HAZARD_LABELS.get(h, h) for h in hazards)
-        return f"{labels}가 감지되었습니다. (카메라 상황: {description})"
+        return f"{labels}가 감지되었습니다."
 
-    return f"비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다. (카메라 상황: {description})"
+    return "비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다."
 
 
 def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
