@@ -69,7 +69,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # 재검색(transform_query → knowledge) 최대 반복 횟수. 무한 루프 방지용.
-MAX_CRAG_ATTEMPTS = 1
+# 1회는 재작성 후 그 결과가 나빠도 재교정 기회가 없어 corrective 루프가 사실상 1-shot이었다.
+# 2회로 올려 계획서(CRAG: 재작성→재검색) 취지의 실질 보정 루프를 확보한다(캡으로 무한루프는 방지).
+MAX_CRAG_ATTEMPTS = 2
+
+# grade가 categorical로 correct라도 confidence score가 이 값 미만이면 저신뢰로 보고
+# 재검색(transform)한다. 기존엔 _parse_grade가 산출한 score를 라우팅에 전혀 쓰지 않아
+# (죽은 신호), "correct score=0.30" 같은 애매한 통과가 그대로 종료됐다 — 이를 활성화한다.
+_CRAG_SCORE_FLOOR = 0.5
 
 # 평가/재작성/정제에 사용하는 LLM. knowledge Executor와 동일 계열(QWEN_TEXT_MODEL_NAME)로 맞춘다.
 # CRAG_MODEL 로 오버라이드 가능 — knowledge_node의 KNOWLEDGE_MODEL 규약과 동일.
@@ -313,7 +320,9 @@ def route_after_grade(state: AgentState) -> str:
         "transform" → transform_query  (쿼리 재작성 후 knowledge 재검색)
     """
     cd = state.get("context_data", {})
-    grade = (cd.get("crag_grade") or {}).get("grade", _DEFAULT_GRADE)
+    crag_grade = cd.get("crag_grade") or {}
+    grade = crag_grade.get("grade", _DEFAULT_GRADE)
+    score = float(crag_grade.get("score", 0.0) or 0.0)
     attempts = int(cd.get("crag_attempts", 0))
 
     # knowledge_node 자체가 예외로 실패한 경우 — "검색 결과가 부실하다"는
@@ -329,8 +338,12 @@ def route_after_grade(state: AgentState) -> str:
         return "refine"
 
     if grade == "correct":
-        logger.info("route_after_grade: correct → refine")
+        # 저신뢰 correct(score<floor)는 애매한 통과 — 아직 재검색 여력이 있으면 한 번 더 교정한다.
+        if score < _CRAG_SCORE_FLOOR:
+            logger.info("route_after_grade: correct지만 저신뢰(score=%.2f<%.2f) → transform", score, _CRAG_SCORE_FLOOR)
+            return "transform"
+        logger.info("route_after_grade: correct(score=%.2f) → refine", score)
         return "refine"
 
-    logger.info("route_after_grade: %s → transform", grade)
+    logger.info("route_after_grade: %s(score=%.2f) → transform", grade, score)
     return "transform"

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -56,8 +57,12 @@ async def graph_rag_search(query: str, entities: List[str] = None) -> str:
     Search for relational information using Graph RAG (Neo4j).
     Best for: Multi-hop reasoning like "What components are related to this warning light?" or "Maintenance interval for a part".
     """
+    # 1.5B ReAct는 entities를 거의 안 채워 보낸다 → 백엔드가 query.split()(조사 포함)으로
+    # substring 매칭해 '선루프가'/'hud가'처럼 엔티티명과 안 맞는다. 호출측이 entities를
+    # 안 주면 조사·의문사를 제거한 깨끗한 term을 자동 추출해 넘긴다(_deterministic_retrieve와 동일 정책).
+    clean_entities = entities or _extract_query_terms(query)
     return await _call_knowledge_tool(
-        "graph_rag_search", {"query": query, "entities": entities or []}
+        "graph_rag_search", {"query": query, "entities": clean_entities}
     )
 
 
@@ -143,6 +148,22 @@ Rules:
 Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
 
 
+# 근거성(faithfulness) 검증용 판정 프롬프트 — 생성된 답변이 검색 context에 실제로
+# 근거하는지(환각 아닌지) 1.5B judge로 확인한다. 어휘 중첩이 낮아 '의심'될 때만 호출된다.
+GROUNDING_CHECK_PROMPT = """You are a strict grounding verifier for a vehicle manual QA system.
+Given the RETRIEVED CONTEXT (excerpts from the vehicle's official manual) and a candidate ANSWER,
+decide whether the ANSWER is supported by (entailed by) the context — i.e. every factual claim,
+number, and instruction in the ANSWER can be traced to the context, with no invented facts.
+
+Rules:
+- "grounded": true only if the answer's substantive claims are supported by the context.
+- Paraphrase/summary of the context is fine. Minor connective wording is fine.
+- If the answer adds facts/numbers not present in the context, or contradicts it → grounded: false.
+- A generic "정보를 찾지 못했습니다" style answer is trivially grounded → true.
+
+Output ONLY compact JSON: {"grounded": true|false, "reasoning": "one short sentence"}"""
+
+
 # 관계형/다중홉(Graph Context Fusion·CoT)이 필요한 질의를 감지하는 휴리스틱 키워드.
 # supervisor Rule 3가 관계형 질의에 Graph RAG를 지시하는 것과 같은 취지 — 종류/구성/
 # 부품/원인/연동/차이 등을 묻거나 여러 소스를 엮어야 하는 질의는 7B 융합/추론으로 보낸다.
@@ -170,13 +191,31 @@ def _needs_graph_fusion(instruction: str, query: str, graph_present: bool) -> bo
     return any(k in haystack for k in _FUSION_KEYWORDS_EN)
 
 
+def _dedup_lines(text: str) -> str:
+    """텍스트에서 공백 제거 후 동일한 라인의 중복을 순서 유지하며 제거한다.
+    같은 tool 반복 호출/겹치는 청크로 동일 excerpt가 여러 번 들어오면 fusion 입력을
+    오염시키고 precision·토큰을 낮추므로 정확 중복 라인을 걷어낸다."""
+    seen = set()
+    out: List[str] = []
+    for line in text.split("\n"):
+        key = line.strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(line)
+    return "\n".join(out)
+
+
 def _extract_tool_context(new_messages: List[Any]) -> Dict[str, str]:
     """ReAct 실행 중 호출된 tool들의 출력을 tool별로 모은다.
 
     Returns: {"graph": "...", "vector": "...", "sql": "...", "all": "합쳐진 원문"}
     tool이 하나도 안 불렸으면 all=""(빈 문자열).
+    중복 excerpt(같은 tool 반복 호출/겹치는 청크)는 엔트리·라인 단위로 제거한다.
     """
     buckets: Dict[str, List[str]] = {"graph": [], "vector": [], "sql": []}
+    seen_entries = set()  # 엔트리(전체 tool 출력) 단위 정확 중복 제거
     for m in new_messages:
         if not isinstance(m, ToolMessage):
             continue
@@ -186,6 +225,10 @@ def _extract_tool_context(new_messages: List[Any]) -> Dict[str, str]:
         # 오인·garbage 융합 입력 방지).
         if _is_unusable_result(content):
             continue
+        entry_key = content.strip()
+        if entry_key in seen_entries:  # 동일 tool 재호출이 같은 청크를 또 돌려준 경우
+            continue
+        seen_entries.add(entry_key)
         if "graph" in name:
             buckets["graph"].append(content)
         elif "vector" in name:
@@ -194,14 +237,16 @@ def _extract_tool_context(new_messages: List[Any]) -> Dict[str, str]:
             buckets["sql"].append(content)
         else:
             buckets["vector"].append(content)  # 미상 tool은 vector 취급
+    # 버킷별로 라인 단위 중복까지 제거(청크 인덱스는 다르지만 본문이 겹치는 경우 대비).
+    joined = {k: _dedup_lines("\n".join(v)) for k, v in buckets.items()}
     parts = []
     for label, key in (("Graph RAG", "graph"), ("Vector RAG", "vector"), ("Text2SQL", "sql")):
-        if buckets[key]:
-            parts.append(f"[{label}]\n" + "\n".join(buckets[key]))
+        if joined[key]:
+            parts.append(f"[{label}]\n" + joined[key])
     return {
-        "graph": "\n".join(buckets["graph"]),
-        "vector": "\n".join(buckets["vector"]),
-        "sql": "\n".join(buckets["sql"]),
+        "graph": joined["graph"],
+        "vector": joined["vector"],
+        "sql": joined["sql"],
         "all": "\n\n".join(parts),
     }
 
@@ -287,6 +332,51 @@ def _is_prompt_echo(text: str) -> bool:
     return t.lstrip().startswith("[User Query]")
 
 
+_GROUNDING_TERM_RE = re.compile(r"[가-힣A-Za-z0-9]{2,}")
+
+
+def _grounding_overlap(answer: str, context: str) -> float:
+    """답변의 내용어(2자+ 한글/영숫자) 중 context에 등장하는 비율(0~1).
+    저비용 근거성 선판정 — 대부분의 grounded 답변은 이 값이 높아 LLM judge를 건너뛴다."""
+    ans_terms = set(_GROUNDING_TERM_RE.findall((answer or "").lower()))
+    if not ans_terms:
+        return 1.0  # 판정할 내용어가 없음 — 통과(별도 malformed 가드가 처리)
+    ctx = (context or "").lower()
+    hit = sum(1 for t in ans_terms if t in ctx)
+    return hit / len(ans_terms)
+
+
+async def _verify_answer_grounded(answer: str, context: str) -> bool:
+    """생성된 답변이 검색 context에 근거하는지(환각 아닌지) 검증한다.
+
+    1) 어휘 중첩이 충분(>=0.5)하면 grounded로 보고 즉시 통과(LLM 호출 없음 — 지연 0).
+    2) 중첩이 낮아 '의심'되는 경우에만 1.5B judge로 확정한다(judge 실패 시 보수적으로 통과).
+    """
+    if not answer or not answer.strip() or not context or not context.strip():
+        return True  # 근거/답변 부재는 다른 가드가 처리
+    overlap = _grounding_overlap(answer, context)
+    if overlap >= 0.5:
+        return True
+    try:
+        llm = ChatOpenAI(
+            model=KNOWLEDGE_RETRIEVAL_MODEL, temperature=0.0, max_tokens=120,
+            base_url=MODEL_SERVER_URL, model_kwargs={"response_format": {"type": "json_object"}},
+        )
+        resp = await llm.ainvoke([
+            SystemMessage(content=GROUNDING_CHECK_PROMPT),
+            HumanMessage(content=f"[RETRIEVED CONTEXT]\n{context}\n\n[ANSWER]\n{answer}"),
+        ])
+        raw = (resp.content or "").strip()
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return True  # 판정 파싱 실패 — 보수적으로 통과(무응답보다 낫다)
+        verdict = json.loads(match.group(0))
+        return bool(verdict.get("grounded", True))
+    except Exception:
+        logger.exception("knowledge: 근거성 judge 실패 — 보수적으로 통과 처리")
+        return True
+
+
 async def _deterministic_retrieve(query: str) -> Dict[str, str]:
     """1.5B ReAct가 tool을 한 번도 안 부른 경우의 안전망 — graph/vector를 직접 호출해
     grounding을 보장한다(에어백 오답처럼 검색 없이 hallucination하는 것을 차단).
@@ -314,7 +404,10 @@ async def _fuse_with_7b(query: str, context_text: str) -> str:
     """7B(QWEN_VL)로 Graph Context Fusion + CoT 합성. tool 미사용(VL 경로는 텍스트 생성)."""
     llm = ChatOpenAI(
         model=KNOWLEDGE_FUSION_MODEL,
-        temperature=0.2,
+        # greedy(0.0). Qwen2-VL-7B은 중국어 중심 모델이라 temperature>0 + top_p 미상한
+        # 조합에서 저확률 CJK/일본어 토큰으로 code-switching이 샜다(坡道/ング 혼입).
+        # 융합은 근거 종합이라 창의성 불필요 — 결정적 디코딩으로 발산을 원천 차단한다.
+        temperature=0.0,
         # 7B fusion 생성 시간은 출력 토큰 수에 거의 선형 — 768은 실측 ~23~60초로
         # A2A 타임아웃을 넘기는 주 병목이었다. 주행 답변은 3~5문장이면 충분하므로
         # 384로 줄여 생성 시간을 ~절반으로 낮춘다(품질 손실 없이 지연 근본 개선).
@@ -379,7 +472,8 @@ async def _summarize_with_1_5b(query: str, context_text: str) -> str:
     """1.5B로 검색된 context를 요약(단순 질의 fast path). 관계형 융합/CoT 불필요."""
     llm = ChatOpenAI(
         model=KNOWLEDGE_RETRIEVAL_MODEL,
-        temperature=0.1,
+        # greedy(0.0) — CJK code-switching 발산 방지(fusion과 동일 이유).
+        temperature=0.0,
         max_tokens=384,
         base_url=MODEL_SERVER_URL,
     )
@@ -420,7 +514,8 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     retrieval_query = refined_query or (plan[0] if plan else user_query)
 
     # 2. 검색 단계 (1.5B, 단순검색) — ReAct 루프로 tool을 호출해 raw context를 모은다.
-    llm = ChatOpenAI(model=KNOWLEDGE_RETRIEVAL_MODEL, temperature=0.1, base_url=MODEL_SERVER_URL)
+    # greedy(0.0) — CJK code-switching 발산 방지(fusion과 동일 이유).
+    llm = ChatOpenAI(model=KNOWLEDGE_RETRIEVAL_MODEL, temperature=0.0, base_url=MODEL_SERVER_URL)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
 
     agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
@@ -502,6 +597,18 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
         # 1.5B/7B가 영어 원문 컨텍스트를 미러링하며 무시하는 경우가 있어(예: 배터리
         # 안전 답변이 영어로 유출) — 최종 답변이 비한국어면 결정적으로 한국어 번역한다.
         final_answer = await _ensure_korean(final_answer)
+
+        # 근거성(faithfulness) 게이트 — 형식 가드(빈값/tool_call/echo)를 통과한 '유창한
+        # 환각'을 잡는다. 답변이 검색 context에 근거하지 않으면(어휘 중첩 낮음 + 1.5B judge
+        # 미근거 판정) 그대로 내보내지 않는다. 아직 재검색을 안 한 첫 시도면 명시적 실패로
+        # raise → 아래 except가 knowledge_failed로 처리하고 supervisor 재위임/observe
+        # 보정 경로를 태운다(환각을 그대로 ship하지 않음). 이미 재검색까지 했다면
+        # (is_reretrieval) 무한 재시도를 피해 best-effort로 답을 유지하되 경고만 남긴다.
+        if not await _verify_answer_grounded(final_answer, tool_ctx["all"]):
+            if not is_reretrieval:
+                logger.warning("knowledge: 답변이 검색 context에 미근거(환각 의심) — 실패 처리로 보정 유도")
+                raise ValueError("Knowledge answer not grounded in retrieved context (hallucination guard)")
+            logger.warning("knowledge: 재검색 후에도 미근거 의심 — best-effort로 답변 유지(무한 재시도 방지)")
 
         # Context data update (accumulate findings)
         context_data["last_knowledge_result"] = final_answer

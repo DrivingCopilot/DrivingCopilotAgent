@@ -32,6 +32,10 @@ from app.agents.knowledge import (
     _is_unusable_result,
     _is_probably_korean,
     _ensure_korean,
+    _dedup_lines,
+    _extract_tool_context,
+    _grounding_overlap,
+    _verify_answer_grounded,
 )
 
 
@@ -94,6 +98,9 @@ def _patch_agent(fake_agent, *, fused="7B 융합 답변",
         # 언어 보정은 passthrough로 stub(실제 번역 LLM 호출 방지) — 언어 판정/번역
         # 자체는 별도 단위 테스트에서 검증한다.
         _ensure_korean=AsyncMock(side_effect=lambda t: t),
+        # 근거성 게이트도 기본 통과로 stub(실제 judge LLM 호출 방지) — 게이트 자체는
+        # 별도 단위 테스트에서 검증한다.
+        _verify_answer_grounded=AsyncMock(return_value=True),
     )
 
 
@@ -619,14 +626,85 @@ async def test_graph_rag_forwards_entities():
 
 
 @pytest.mark.asyncio
-async def test_graph_rag_defaults_entities_to_empty_list():
-    """entities 미지정 시 빈 리스트로 정규화되어 전달된다."""
+async def test_graph_rag_auto_extracts_entities_when_unspecified():
+    """entities 미지정 시 조사/의문사를 제거한 깨끗한 term을 자동 추출해 넘긴다
+    (백엔드가 query.split() 조사포함 매칭으로 엔티티명과 안 맞는 문제 방지)."""
     mock_call = AsyncMock(return_value=("관계 정보", "success", "", ""))
     with patch("app.agents.knowledge.call_mcp_tool_once", mock_call):
-        await graph_rag_search.ainvoke({"query": "타이어 관련 정비"})
+        await graph_rag_search.ainvoke({"query": "타이어 공기압은 어떻게 점검해?"})
 
     _, params = mock_call.await_args.args
-    assert params["entities"] == []
+    # '어떻게'(의문사)는 제외, '타이어'/'공기압'(조사 '은' 제거)은 포함되어야 한다.
+    assert "어떻게" not in params["entities"]
+    assert any("타이어" in e for e in params["entities"])
+    assert any("공기압" in e for e in params["entities"])
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("a\nb\na\nc\nb", "a\nb\nc"),                       # 정확 중복 라인 제거(순서 유지)
+    ("  x  \nx\ny", "  x  \ny"),                          # strip 후 동일 → 첫 등장만 유지
+    ("한 줄\n\n한 줄", "한 줄\n"),                          # 빈 줄은 보존, 중복 텍스트만 제거
+])
+def test_dedup_lines(text, expected):
+    assert _dedup_lines(text) == expected
+
+
+def test_extract_tool_context_dedups_repeated_tool_output():
+    """같은 tool이 동일 청크를 두 번 돌려줘도 all/vector에 한 번만 담긴다."""
+    dup = "매뉴얼 근거 A"
+    msgs = [
+        ToolMessage(content=dup, name="vector_rag_search", tool_call_id="c1"),
+        ToolMessage(content=dup, name="vector_rag_search", tool_call_id="c2"),
+    ]
+    ctx = _extract_tool_context(msgs)
+    assert ctx["vector"].count(dup) == 1
+    assert ctx["all"].count(dup) == 1
+
+
+# ---------------------------------------------------------------------------
+# 근거성(faithfulness) 게이트
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("answer,context,expected_high", [
+    ("타이어 공기압을 점검하십시오", "타이어 공기압을 점검하십시오. 규정 공기압 유지.", True),
+    ("완전히 무관한 환각 답변 텍스트", "타이어 공기압 매뉴얼 내용", False),
+])
+def test_grounding_overlap(answer, context, expected_high):
+    overlap = _grounding_overlap(answer, context)
+    assert (overlap >= 0.5) == expected_high
+
+
+@pytest.mark.asyncio
+async def test_verify_grounded_high_overlap_skips_llm_judge():
+    """어휘 중첩이 높으면 LLM judge 호출 없이 즉시 grounded(지연 0)."""
+    answer = "타이어 공기압을 점검하십시오"
+    context = "타이어 공기압을 점검하십시오. 규정 공기압을 유지하십시오."
+    with patch("app.agents.knowledge.ChatOpenAI") as mock_llm:
+        assert await _verify_answer_grounded(answer, context) is True
+        mock_llm.assert_not_called()  # judge 미호출
+
+
+@pytest.mark.asyncio
+async def test_verify_grounded_low_overlap_uses_llm_judge():
+    """중첩이 낮으면 1.5B judge로 확정 — judge가 미근거 판정하면 False."""
+    judge = MagicMock()
+    judge.ainvoke = AsyncMock(return_value=MagicMock(content='{"grounded": false, "reasoning": "unsupported"}'))
+    with patch("app.agents.knowledge.ChatOpenAI", MagicMock(return_value=judge)):
+        result = await _verify_answer_grounded("전혀 무관한 환각", "타이어 공기압 매뉴얼")
+    assert result is False
+    judge.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ungrounded_answer_raises_and_is_handled_as_failure():
+    """근거성 게이트가 미근거로 판정하면 답을 ship하지 않고 실패 처리(knowledge_failed)한다."""
+    fake = FakeReactAgent(answer="유창하지만 근거 없는 환각 답변")
+    state = {"messages": [HumanMessage(content="배터리 취급 주의점")], "plan": [], "context_data": {}}
+    with _patch_agent(fake) as _:
+        # 기본 stub은 게이트 통과이므로, 이 테스트에서만 미근거(False)로 오버라이드.
+        with patch("app.agents.knowledge._verify_answer_grounded", AsyncMock(return_value=False)):
+            result = await knowledge_node(state)
+    assert result["context_data"].get("knowledge_failed") is True
 
 
 # ---------------------------------------------------------------------------

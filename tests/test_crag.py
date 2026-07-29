@@ -174,12 +174,18 @@ async def test_refine_noop_when_no_retrieval():
 # route_after_grade (조건부 엣지 함수) — 순수 함수, LLM 불필요
 # ---------------------------------------------------------------------------
 
-def _state_with(grade, attempts=0):
-    return {"context_data": {"crag_grade": {"grade": grade}, "crag_attempts": attempts}}
+def _state_with(grade, attempts=0, score=1.0):
+    # score 기본은 고신뢰(1.0) — 실제 correct grade에는 confidence가 함께 온다.
+    return {"context_data": {"crag_grade": {"grade": grade, "score": score}, "crag_attempts": attempts}}
 
 
-def test_route_correct_goes_to_refine():
-    assert route_after_grade(_state_with("correct")) == "refine"
+def test_route_correct_high_score_goes_to_refine():
+    assert route_after_grade(_state_with("correct", score=0.9)) == "refine"
+
+
+def test_route_correct_low_score_goes_to_transform():
+    # 저신뢰 correct(score<floor)는 애매한 통과 — 재검색으로 교정한다(죽은 score 신호 활성화).
+    assert route_after_grade(_state_with("correct", score=0.3)) == "transform"
 
 
 def test_route_incorrect_goes_to_transform():
@@ -191,8 +197,13 @@ def test_route_ambiguous_goes_to_transform():
 
 
 def test_route_caps_reretrieval_to_refine():
-    # 재검색 캡 소진 → grade 무관하게 refine (무한 루프 방지)
-    assert route_after_grade(_state_with("incorrect", attempts=MAX_CRAG_ATTEMPTS)) == "refine"
+    # 재검색 캡 소진 → grade/score 무관하게 refine (무한 루프 방지)
+    assert route_after_grade(_state_with("correct", attempts=MAX_CRAG_ATTEMPTS, score=0.1)) == "refine"
+
+
+def test_max_crag_attempts_allows_a_real_corrective_loop():
+    # 1-shot이 아니라 최소 2회 재검색 여력이 있어야 실질 corrective 루프가 성립한다.
+    assert MAX_CRAG_ATTEMPTS >= 2
 
 
 def test_route_default_grade_when_missing():
