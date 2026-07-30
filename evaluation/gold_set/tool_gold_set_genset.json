@@ -1,0 +1,282 @@
+[
+  {
+    "id": "gen_001",
+    "route_type": "tool",
+    "query": "에어컨 이제 그만 틀어도 될 것 같아",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "에어컨을 껐어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_002",
+    "route_type": "tool",
+    "query": "에어컨 작동 중지해줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "에어컨을 껐어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_003",
+    "route_type": "tool",
+    "query": "너무 더운데 24도로 맞춰줄래",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"temperature": 24, "on": true},
+    "expected_answer": "에어컨을 켜고 온도를 24℃로 설정했어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_004",
+    "route_type": "tool",
+    "query": "창문 좀 닫아줄래",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": false},
+    "expected_answer": "창문을 닫았습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_005",
+    "route_type": "tool",
+    "query": "바람 좀 쐬게 창문 개방해줘",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": true},
+    "expected_answer": "창문을 열었습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_006",
+    "route_type": "tool",
+    "query": "주차 보조 그만 써도 돼",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": false},
+    "expected_answer": "자동 주차 모드를 해제했습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_007",
+    "route_type": "tool",
+    "query": "주차 좀 도와줘",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": true},
+    "expected_answer": "자동 주차 모드를 활성화했습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_008",
+    "route_type": "tool",
+    "query": "와이퍼 그만 작동시켜",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "와이퍼를 껐습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_009",
+    "route_type": "tool",
+    "query": "비 오는데 와이퍼 좀 작동시켜줘",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "와이퍼를 켰습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_010",
+    "route_type": "tool",
+    "query": "지금 속도가 어떻게 되는지 알려줄래?",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "speed"},
+    "expected_answer": "현재 속도는 60km/h 입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_011",
+    "route_type": "tool",
+    "query": "RPM이 몇인지 궁금해",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "rpm"},
+    "expected_answer": "현재 RPM은 2000입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_012",
+    "route_type": "tool",
+    "query": "기름이 얼마나 남았는지 확인해줄래",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "fuel"},
+    "expected_answer": "연료 잔량은 75% 입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_013",
+    "route_type": "tool",
+    "query": "배터리 잔량 알려줄래?",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "battery"},
+    "expected_answer": "배터리는 90% 입니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_014",
+    "route_type": "tool",
+    "query": "혹시 지금 경고등 뜬 거 있나 확인해줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "warning_lights"},
+    "expected_answer": "켜진 경고등이 없습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_015",
+    "route_type": "tool",
+    "query": "타이어 공기압 상태 알려줄래",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "tire_pressure"},
+    "expected_answer": "타이어 압력(psi) - 좌앞 33.0, 우앞 33.0, 좌뒤 32.0, 우뒤 33.0",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_016",
+    "route_type": "tool",
+    "query": "노래 좀 재생해봐",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "play"},
+    "expected_answer": "음악을 재생합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_017",
+    "route_type": "tool",
+    "query": "잠깐만 노래 좀 멈춰줄래",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "pause"},
+    "expected_answer": "음악을 일시 정지했어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_018",
+    "route_type": "tool",
+    "query": "다음 트랙으로 넘어가줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "next"},
+    "expected_answer": "다음 곡으로 넘겼어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_019",
+    "route_type": "tool",
+    "query": "실내등 좀 켜줄래",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "실내등을 켰습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_020",
+    "route_type": "tool",
+    "query": "너무 밝은데 실내등 좀 꺼줄래",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "실내등을 껐습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_021",
+    "route_type": "tool",
+    "query": "시트를 조금 더 눕혀줘, 등받이 110도 정도로",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "down", "recline_angle": 110},
+    "expected_answer": "시트를 down 방향으로 조절했어요, 등받이 각도 110도.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_022",
+    "route_type": "tool",
+    "query": "시트를 조금 세워줄래",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "up"},
+    "expected_answer": "시트를 up 방향으로 조절했어요.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_023",
+    "route_type": "tool",
+    "query": "연비 신경 써서 운전할 수 있게 모드 바꿔줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "eco"},
+    "expected_answer": "주행 모드를 eco로 변경했습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_024",
+    "route_type": "tool",
+    "query": "좀 더 힘 있게 달릴 수 있게 해줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "sport"},
+    "expected_answer": "주행 모드를 sport로 변경했습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_025",
+    "route_type": "tool",
+    "query": "부산역까지 경로 좀 잡아줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "부산역"},
+    "expected_answer": "'부산역'(으)로 길 안내를 시작합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_026",
+    "route_type": "tool",
+    "query": "회사로 안내해줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "회사"},
+    "expected_answer": "'회사'(으)로 길 안내를 시작합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_027",
+    "route_type": "tool",
+    "query": "사고 난 것 같은데 응급 연락 좀 해줘",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "call"},
+    "expected_answer": "긴급 전화를 연결합니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  },
+  {
+    "id": "gen_028",
+    "route_type": "tool",
+    "query": "고장 난 것 같으니 비상 표시등 켜줘",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "alert"},
+    "expected_answer": "비상등을 켰습니다.",
+    "relevant_chunk_ids": [],
+    "expected_sql": null
+  }
+]
