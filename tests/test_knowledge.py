@@ -521,6 +521,35 @@ async def test_7b_fusion_prompt_echo_falls_back_not_leaked():
 
 
 @pytest.mark.asyncio
+async def test_graph_present_without_keyword_skips_7b_fusion():
+    # (Phase 4) graph 결과가 있어도 관계형 키워드가 없는 단순 절차 질의는 7B fusion을
+    # 강제하지 않고 1.5B ReAct 답변을 그대로 쓴다(broad-match graph_present로 인한
+    # fusion 남발·지연·7B 500 방지). graph 근거는 context로 들어가 grounding은 유지.
+    fake = FakeReactAgent(
+        answer="트립 버튼을 짧게 누르면 표시됩니다.",
+        tool_outputs=[("graph_rag_search", "(트립 버튼)-[:HAS_PART]-(계기판)")],
+    )
+    state = {
+        "messages": [HumanMessage(content="주행거리는 어디서 확인해?")],  # 관계형 키워드 없음
+        "plan": ["주행거리 확인 방법"],
+        "context_data": {},
+        "error_count": {},
+    }
+    fuse_mock = AsyncMock(return_value="쓰이면 안 됨")
+    with patch.multiple(
+        "app.agents.knowledge",
+        create_react_agent=MagicMock(return_value=fake),
+        ChatOpenAI=MagicMock(return_value=MagicMock()),
+        _deterministic_retrieve=AsyncMock(),
+        _fuse_with_7b=fuse_mock,
+        _verify_answer_grounded=AsyncMock(return_value=True),
+    ):
+        result = await knowledge_node(state)
+    assert result["context_data"]["last_knowledge_result"] == "트립 버튼을 짧게 누르면 표시됩니다."
+    fuse_mock.assert_not_awaited()  # 키워드 없으면 graph_present여도 fusion 미호출
+
+
+@pytest.mark.asyncio
 async def test_complex_relational_query_uses_7b_fusion():
     # graph tool 결과가 있으면(관계형 데이터) 복잡 질의로 보고 7B 융합/CoT 경로를 탄다.
     fake = FakeReactAgent(

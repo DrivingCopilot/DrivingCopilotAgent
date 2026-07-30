@@ -92,6 +92,15 @@ IMPORTANT — Source of truth:
 - Base your final answer strictly on the tool results returned to you. Only if a tool result is
   genuinely empty or irrelevant after reformulating the query should you say the information was not
   found in the manual — do not fall back to a generic apology/disclaimer instead.
+- Answer the exact quantity that was asked. When the user asks for a specific value (e.g. tire
+  pressure, voltage, torque, capacity, a service interval), give that value ONLY if the context
+  states that exact quantity. If the context does not contain it, say the tools did not return that
+  value — NEVER substitute a different KIND of specification (a size, model/part code, or an unrelated
+  number) and present it as the answer. A tire SIZE like "235/60R18" is NOT a tire pressure; a wheel
+  spec is not a torque; do not equate quantities of different types. A quantity must carry the unit of
+  the asked measure to qualify — a tire pressure reads in kPa/psi/bar, a voltage in V, a torque in
+  N·m/kgf·m. If the context has no number in the asked measure's unit, the specific value is NOT
+  present — say so instead of offering a differently-typed spec.
 
 Workflow:
 - Read the current plan and the user's request.
@@ -124,7 +133,14 @@ Rules:
   the manual or tell the user to contact the manufacturer when relevant context is present below.
 - Fuse Graph relations (e.g. "(운전석 에어백)-[:HAS_PART]-(에어백 시스템)") with Vector excerpts:
   enumerate/relate the entities the graph exposes and ground them in the manual text.
-- Reason over multi-hop relations when the question needs it (types/components/causes/links).
+- Reason over multi-hop relations when the question needs it (types/components/causes/links) — but only
+  chain hops that are ACTUALLY present in the graph/vector context. Do NOT invent an intermediate link,
+  component, cause, or number to complete a chain the context does not establish.
+- GROUNDING (critical): every factual claim, number, spec, and instruction in your answer must be
+  traceable to the retrieved context. Do NOT add outside/world knowledge, do NOT guess, do NOT
+  extrapolate beyond what the context states. If the context only partially answers the question, answer
+  only that part and say the rest is not covered — a shorter fully-grounded answer beats a fuller one
+  with unsupported claims.
 - If the context is genuinely empty or irrelevant, say in one line that the manual does not cover it —
   do NOT produce a generic apology/disclaimer instead.
 
@@ -143,6 +159,12 @@ Rules:
 - The retrieved context IS the source of truth and IS from the manual — never say you lack access to the
   manual or tell the user to contact the manufacturer when relevant context is present below.
 - Answer ONLY from the context; do not add facts that are not in it.
+- Answer the exact quantity asked. If the user asks for a specific value (tire pressure, voltage,
+  torque, capacity, interval) and the context does not state that exact quantity, say it is not in the
+  retrieved context — NEVER substitute a different KIND of spec (a size, model/part code, or unrelated
+  number) as if it were the answer. A tire SIZE like "235/60R18" is NOT a tire pressure. A value only
+  qualifies if it carries the asked measure's unit (pressure→kPa/psi/bar, voltage→V, torque→N·m); if no
+  such value is in the context, say the specific value is not present.
 - Keep it short (3~5 sentences) and directly answer the question.
 
 Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
@@ -177,13 +199,23 @@ _FUSION_KEYWORDS_EN = (
 )
 
 
+# (Phase 4 라우팅 실험) graph_present만으로 7B fusion을 강제할지 여부.
+# 문제: Neo4j가 broad CONTAINS 매칭이라 거의 모든 질의에 관계가 매칭돼 graph_present=True →
+# 7B fusion이 남발되고 지연(median ~23s)과 7B 서버 500(복합 질의 70% 실패)을 유발했다.
+# 기본(False)은 '관계형 키워드가 있을 때만' fusion하고, 그 외에는 1.5B(요약/ReAct)로 라우팅해
+# 7B 부하를 낮춘다. graph 근거는 여전히 context로 들어가 grounding은 유지된다.
+# 구 동작(graph_present→fusion)은 KNOWLEDGE_FUSION_ON_GRAPH_PRESENT=1 로 복원 가능.
+FUSION_ON_GRAPH_PRESENT = os.getenv("KNOWLEDGE_FUSION_ON_GRAPH_PRESENT", "0") == "1"
+
+
 def _needs_graph_fusion(instruction: str, query: str, graph_present: bool) -> bool:
     """이 질의가 7B Graph Fusion/CoT 경로가 필요한 '복잡한' 질의인지 판정한다.
 
-    - Graph RAG 관계 데이터가 실제로 수집됐으면(graph_present) 융합 대상이 있으므로 복잡으로 본다.
-    - 아니면 instruction/query에 관계형·열거형 지표 키워드가 있는지로 판정한다.
+    - 관계형·열거형 지표 키워드(종류/구성/관계/원인 등)가 있으면 복잡으로 본다.
+    - graph_present는 기본적으론 fusion을 강제하지 않는다(위 상수 주석 참고) —
+      broad-match로 거의 항상 True라 실질 신호가 아니기 때문. env로만 구 동작 복원.
     """
-    if graph_present:
+    if graph_present and FUSION_ON_GRAPH_PRESENT:
         return True
     haystack = f"{instruction} {query}".lower()
     if any(k in haystack for k in _FUSION_KEYWORDS_KO):
