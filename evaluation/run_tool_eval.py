@@ -30,8 +30,8 @@ run_knowledge_eval.py 와의 차이:
     timeout/parameter/invalid_tool/sql 4개 키를 항상 갖지만, invalid_tool/sql 은 이 경로
     에서 구조적으로 항상 0이다.
 
-알려진 stale gold 항목(STALE_GOLD_IDS, 6건) — result_exact 채점은 하되 overall/by_tool
-집계에서는 제외하고 known_stale 로 별도 표시한다. 근거는 두 갈래로 서로 다르다:
+알려진 stale gold 항목(STALE_GOLD_IDS, 7건) — result_exact 채점은 하되 overall/by_tool
+집계에서는 제외하고 known_stale 로 별도 표시한다. 근거는 세 갈래로 서로 다르다:
     - tool_022~025(get_vehicle_status): 실제 응답 템플릿(mcp_server.py:82-92)이 항상
       "타이어 압력(...)...  경고등 ..." 절을 문장 끝에 붙이는데, gold expected_answer 는
       "...주행 모드 normal."에서 끝나고 이 절 자체가 없다. vehicle_state 값이 무엇이든
@@ -41,6 +41,11 @@ run_knowledge_eval.py 와의 차이:
       gold 가 speed=0/rpm=0 을 기대하지만 실제 초기값(app/services/vehicle.py:26-27 의
       _DEFAULTS)이 speed=60.0/rpm=2000 인 상태 값 드리프트다. vehicle_state 가 우연히
       0 이 되면 일치할 수도 있어 tool_022~025 와 달리 "영구 불일치"는 아니다.
+    - tool_021(control_media, prev): 쿼리 '지금 노래 다시 들려줘'가 요구하는
+      의도(동일 곡 재재생)가 애초에 12종 tool 스펙(play/pause/next/prev)에
+      없는 액션이라 expected_tool_params={'action':'prev'}로 강제 매핑된 것.
+      tool_022~025(문자열 템플릿 불일치)나 tool_056/057(초기값 드리프트)과
+      달리 이건 tool_correct 자체가 구조적으로 불가능한 케이스.
 
 전제(E2E 실행 스택이 모두 떠 있어야 함):
     - Ollama(11434, OPENAI_BASE_URL)       : execution_node 의 tool 추출용 LLM
@@ -59,11 +64,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()  # app.core.config 가 import 시점에 os.getenv 를 읽으므로 가장 먼저 실행
@@ -75,14 +82,53 @@ from evaluation._gold import load_gold_set
 # mcp_server.py 실제 시그니처의 기본값. control_climate 만 on=True 기본값을 가짐.
 TOOL_DEFAULTS: Dict[str, Dict[str, Any]] = {"control_climate": {"on": True}}
 
+# Backend REST(계획서 §9) 의 차량 상태 조회 엔드포인트. MCP_SERVER_URL(app/core/config.py, 9000)
+# 과는 별개 포트(8000, FastAPI REST)라 여기서 별도 env var 로 관리한다.
+VEHICLE_STATE_URL: str = os.getenv("VEHICLE_STATE_URL", "http://localhost:8000/vehicle/state")
+
+
+async def fetch_vehicle_state(timeout: float = 5.0) -> Dict[str, Any]:
+    """Backend REST(GET /vehicle/state, 계획서 §9)에서 현재 VehicleState 를 조회한다."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(VEHICLE_STATE_URL)
+        resp.raise_for_status()
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# 상태 변경 검증용 매핑 (다음 단계에서 eval_item()/score_tool_item() 에 연결 예정 — 아직 미사용)
+# ---------------------------------------------------------------------------
+
+# tool 파라미터(dict) -> VehicleState 에 적용될 (field, value) 목록.
+# 이 4종만 vehicle_state.json 을 실제로 변경한다(mcp_server.py 의
+# update_vehicle_state 호출부 참고: control_climate/control_window/
+# set_driving_mode/control_wiper).
+TOOL_STATE_FIELD: Dict[str, Callable[[Dict[str, Any]], List[Tuple[str, Any]]]] = {
+    "control_climate": lambda p: [
+        ("ac_on", p.get("on", True)),
+        *([("ac_temperature", float(p["temperature"]))] if p.get("temperature") is not None else []),
+    ],
+    "control_window": lambda p: [("window_open", p["is_open"])],
+    "set_driving_mode": lambda p: [("driving_mode", p["mode"])],
+    "control_wiper": lambda p: [("wiper_on", p["on"])],
+}
+
+# 나머지 8종(set_navigation, control_media, get_vehicle_status, control_lighting,
+# control_seat, control_parking, trigger_emergency, query_dashboard)은
+# VehicleState 에 대응 필드가 없거나(control_lighting/control_seat/control_parking/
+# trigger_emergency 는 mcp_server.py 에서 update_vehicle_state 를 호출하지 않음)
+# 조회 전용(get_vehicle_status/query_dashboard/set_navigation/control_media)이라
+# 상태검증 대상에서 제외한다.
+
 # run_execution 이 실제로 만들 수 있는 §5 error_type. invalid_tool/sql 은 이 경로에서
 # 구조적으로 발생하지 않지만(모듈 docstring 참고), 리포트에는 항상 4개 키를 노출한다.
 _ERROR_TYPES = ("timeout", "parameter", "invalid_tool", "sql")
 
-# 응답 문자열(result_exact) 채점에서 제외할 알려진 stale gold 항목.
-# 근거는 모듈 docstring "알려진 stale gold 항목" 절 참고 — tool_022~025 와 tool_056/057
-# 은 서로 다른 이유로 결과 문자열이 gold 와 일치하지 않는다.
-STALE_GOLD_IDS = {"tool_022", "tool_023", "tool_024", "tool_025", "tool_056", "tool_057"}
+# overall/by_tool 집계에서 제외할 알려진 stale gold 항목.
+# 근거는 모듈 docstring "알려진 stale gold 항목" 절 참고 — tool_022~025/tool_056~057 은
+# 결과 문자열이 gold 와 일치하지 않고, tool_021 은 gold 자체가 12종 tool 스펙에 없는
+# 의도를 강제 매핑한 것이라 tool_correct 판정 자체가 구조적으로 성립하지 않는다.
+STALE_GOLD_IDS = {"tool_021", "tool_022", "tool_023", "tool_024", "tool_025", "tool_056", "tool_057"}
 
 
 # ---------------------------------------------------------------------------
@@ -115,19 +161,26 @@ def score_tool_item(
     expected_params: Dict[str, Any],
     calls: List[Tuple[str, Dict[str, Any], str, str, str]],
     expected_answer: str = "",
+    state_before: Optional[Dict[str, Any]] = None,
+    state_after: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """단일 gold 항목을 채점한다.
 
     calls 는 extract_tool_invocations() 의 반환값(호출 순서대로)이며, 첫 번째 호출만 본다
     (plan 이 단일 step 이므로 run_execution 이 성공적으로 처리하면 tool_calls 는 최대 1건).
 
-    result_exact 는 tool_correct 이고 params_effective 도 True 일 때만 계산한다 — 즉
-    "tool도 맞고 파라미터도(기본값 흡수 포함) 맞은 경우에만 응답 문자열까지 정확히
-    일치하는지"를 보는 지표다. 그 외(no_tool_call, status=="error", hallucinated_tool,
-    wrong_tool, param_mismatch)는 응답 문자열 비교 자체가 의미 없으므로 전부 None.
+    result_exact/state_correct 는 둘 다 tool_correct 이고 params_effective 도 True 일 때만
+    계산한다 — "tool도 맞고 파라미터도(기본값 흡수 포함) 맞은 경우에만" 응답 문자열/실제
+    차량 상태까지 정확히 일치하는지를 보는 지표다. 그 외(no_tool_call, status=="error",
+    hallucinated_tool, wrong_tool, param_mismatch)는 비교 자체가 의미 없으므로 전부 None.
+
+    state_before 는 지금 당장은 비교에 쓰이지 않는다(향후 diff 로깅용으로 시그니처에만 받아둠).
+    state_after 가 None(fetch_vehicle_state 실패 등)이거나 name 이 TOOL_STATE_FIELD 에 없는
+    tool(상태검증 대상 아닌 8종)이면 state_correct 는 None 이다.
 
     Returns:
-        {"tool_correct", "params_exact", "params_effective", "result_exact", "failure", "error_type"}
+        {"tool_correct", "params_exact", "params_effective", "result_exact", "state_correct",
+         "failure", "error_type"}
     """
     if not calls:
         return {
@@ -135,6 +188,7 @@ def score_tool_item(
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": "no_tool_call",
             "error_type": None,
         }
@@ -147,6 +201,7 @@ def score_tool_item(
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": error_type or "unknown_error",
             "error_type": error_type or None,
         }
@@ -157,6 +212,7 @@ def score_tool_item(
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": "hallucinated_tool",
             "error_type": None,
         }
@@ -167,6 +223,7 @@ def score_tool_item(
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": "wrong_tool",
             "error_type": None,
         }
@@ -176,11 +233,17 @@ def score_tool_item(
     params_effective = all(effective.get(k) == v for k, v in expected_params.items())
     result_exact = result_text.strip() == expected_answer.strip() if params_effective else None
 
+    state_correct: Optional[bool] = None
+    if params_effective and name in TOOL_STATE_FIELD and state_after is not None:
+        expected_fields = TOOL_STATE_FIELD[name](params)
+        state_correct = all(state_after.get(field) == value for field, value in expected_fields)
+
     return {
         "tool_correct": True,
         "params_exact": params_exact,
         "params_effective": params_effective,
         "result_exact": result_exact,
+        "state_correct": state_correct,
         "failure": None if params_effective else "param_mismatch",
         "error_type": None,
     }
@@ -207,15 +270,16 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
     calls: List[Tuple[str, Dict[str, Any], str, str, str]] = []
     score: Dict[str, Any] = {}
 
+    # 상태검증(state_correct)용 스냅샷. Backend 재기동 중 등으로 조회가 실패해도
+    # eval_item() 자체는 죽지 않도록 각각 개별 try/except 로 감싸고 실패 시 None 유지.
+    try:
+        state_before = await fetch_vehicle_state()
+    except Exception:
+        state_before = None
+
     try:
         result = await asyncio.wait_for(run_execution(state), timeout=item_timeout)
         calls = extract_tool_invocations(result)
-        score = score_tool_item(
-            item["expected_tool_name"],
-            item["expected_tool_params"],
-            calls,
-            item.get("expected_answer", ""),
-        )
     except asyncio.TimeoutError:
         errored, error_msg = True, f">{item_timeout}s"
         score = {
@@ -223,6 +287,7 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": "eval_timeout",
             "error_type": None,
         }
@@ -233,9 +298,25 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
             "params_exact": False,
             "params_effective": False,
             "result_exact": None,
+            "state_correct": None,
             "failure": "eval_exception",
             "error_type": None,
         }
+
+    try:
+        state_after = await fetch_vehicle_state()
+    except Exception:
+        state_after = None
+
+    if not errored:
+        score = score_tool_item(
+            item["expected_tool_name"],
+            item["expected_tool_params"],
+            calls,
+            item.get("expected_answer", ""),
+            state_before,
+            state_after,
+        )
 
     latency = time.perf_counter() - started
     if calls:
@@ -254,6 +335,8 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
         "called_params": called_params,
         "called_status": called_status,
         "called_result": called_result,
+        "state_before": state_before,
+        "state_after": state_after,
         **score,
         "errored": errored,
         "error_msg": error_msg,
@@ -274,12 +357,16 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         # 참고), result_exact_rate 는 "완전히 맞은 항목 중 응답 문자열까지 일치한 비율"이다 —
         # n 전체에 대한 비율이 아니다.
         re_vals = [r["result_exact"] for r in subset if r["result_exact"] is not None]
+        # state_correct 도 result_exact 와 동일하게 "계산 가능했던 항목 중 비율"이다 —
+        # TOOL_STATE_FIELD 미대상(8종) 이거나 state_after 조회 실패 시 None 이라 분모에서 빠진다.
+        state_vals = [r["state_correct"] for r in subset if r["state_correct"] is not None]
         return {
             "n": n,
             "tool_acc": round(sum(r["tool_correct"] for r in subset) / n, 3),
             "params_exact_rate": round(sum(r["params_exact"] for r in subset) / n, 3),
             "params_effective_rate": round(sum(r["params_effective"] for r in subset) / n, 3),
             "result_exact_rate": round(sum(re_vals) / len(re_vals), 3) if re_vals else None,
+            "state_acc": round(sum(state_vals) / len(state_vals), 3) if state_vals else None,
             "failure_dist": dict(Counter(r["failure"] for r in subset if r["failure"])),
             "avg_latency_s": round(sum(r["latency_s"] for r in subset) / n, 2),
         }
@@ -313,12 +400,17 @@ def print_report(summary: Dict[str, Any]) -> None:
     def line(label: str, s: Dict[str, Any]) -> str:
         if s.get("n", 0) == 0:
             return f"  {label:<20} (없음)"
+        # result_exact_rate 는 해당 버킷에 완전정답(tool_correct and params_effective)이
+        # 하나도 없으면 None 이 된다(agg() 참고) — 포맷 문자열이 NoneType 에서 죽지 않도록 가드.
+        result_exact_display = s["result_exact_rate"] if s["result_exact_rate"] is not None else "-"
+        state_acc_display = s["state_acc"] if s["state_acc"] is not None else "-"
         return (
             f"  {label:<20} n={s['n']:<4} tool_acc={s['tool_acc']:<6} "
             f"exact={s['params_exact_rate']:<6} effective={s['params_effective_rate']:<6} "
-            # result_exact 는 "완전히 맞은 항목(tool_correct and params_effective) 중
-            # 응답 문자열까지 일치한 비율" — n 전체 대비 비율이 아님.
-            f"result_exact={s['result_exact_rate']:<6} avg_latency={s['avg_latency_s']}s"
+            # result_exact/state_acc 는 "완전히 맞은 항목(tool_correct and params_effective) 중
+            # 응답 문자열/실제 상태까지 일치한 비율" — n 전체 대비 비율이 아님.
+            f"result_exact={result_exact_display:<6} state_acc={state_acc_display:<6} "
+            f"avg_latency={s['avg_latency_s']}s"
         )
 
     print("\n" + "=" * 88)

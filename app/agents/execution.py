@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.core.config import MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.mcp_client import call_mcp_tool_raw as _call_mcp_tool_raw
@@ -72,7 +72,7 @@ _TOOL_SIGNATURES = """\
 - query_dashboard(metric: "speed"|"rpm"|"fuel"|"battery"|"tire_pressure"|"warning_lights")
 """
 
-_EXTRACTION_SYSTEM_PROMPT = f"""\
+_PROMPT_R1 = f"""\
 You are a tool-call extractor for a vehicle control system.
 Given a task description, extract which MCP tool to call and what parameters to use.
 
@@ -86,7 +86,168 @@ Rules:
 - For tools with no parameters (e.g. get_vehicle_status), output: {{"tool_name": "get_vehicle_status", "params": {{}}}}
 - If the task does not map to any listed tool, output: {{"tool_name": null, "params": {{}}}}
 - Do NOT output anything outside the JSON object.
+
+## Examples
+Task: 에어컨 꺼줘        → {{"tool_name":"control_climate","params":{{"on":false}}}}
+Task: 에어컨 22도로 켜줘  → {{"tool_name":"control_climate","params":{{"temperature":22,"on":true}}}}
+Task: 창문 닫아          → {{"tool_name":"control_window","params":{{"is_open":false}}}}
+Task: 창문 열어줘        → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 자동 주차 꺼줘      → {{"tool_name":"control_parking","params":{{"enable":false}}}}
+Task: 자동 주차 켜줘      → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 와이퍼 꺼줘        → {{"tool_name":"control_wiper","params":{{"on":false}}}}
+Task: 와이퍼 켜줘        → {{"tool_name":"control_wiper","params":{{"on":true}}}}
 """
+
+_PROMPT_R2 = f"""\
+You are a tool-call extractor for a vehicle control system.
+Given a task description, extract which MCP tool to call and what parameters to use.
+
+질문형 문장('~얼마야?', '~있어?', '~몇이야?', '~어때?')은 상태를 변경하는 tool이 아니라
+조회 tool(query_dashboard, get_vehicle_status)을 사용한다.
+
+Available tools:
+{_TOOL_SIGNATURES}
+
+Output ONLY valid JSON in this exact format:
+{{"tool_name": "<tool_name>", "params": {{<key>: <value>}}}}
+
+Rules:
+- For tools with no parameters (e.g. get_vehicle_status), output: {{"tool_name": "get_vehicle_status", "params": {{}}}}
+- If the task does not map to any listed tool, output: {{"tool_name": null, "params": {{}}}}
+- Do NOT output anything outside the JSON object.
+
+## Examples
+Task: 에어컨 꺼줘        → {{"tool_name":"control_climate","params":{{"on":false}}}}
+Task: 에어컨 22도로 켜줘  → {{"tool_name":"control_climate","params":{{"temperature":22,"on":true}}}}
+Task: 창문 닫아          → {{"tool_name":"control_window","params":{{"is_open":false}}}}
+Task: 창문 열어줘        → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 자동 주차 꺼줘      → {{"tool_name":"control_parking","params":{{"enable":false}}}}
+Task: 자동 주차 켜줘      → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 와이퍼 꺼줘        → {{"tool_name":"control_wiper","params":{{"on":false}}}}
+Task: 와이퍼 켜줘        → {{"tool_name":"control_wiper","params":{{"on":true}}}}
+"""
+
+_PROMPT_R3 = f"""\
+You are a tool-call extractor for a vehicle control system.
+Given a task description, extract which MCP tool to call and what parameters to use.
+
+질문형 문장('~얼마야?', '~있어?', '~몇이야?', '~어때?')은 상태를 변경하는 tool이 아니라
+조회 tool을 사용한다. 이때 속도/RPM/연료/배터리/타이어 압력/경고등처럼 특정 지표
+하나만 묻는 경우 query_dashboard(metric=...)를 사용하고, '차 상태 어때?/전체 상태
+확인해줘'처럼 여러 항목을 한꺼번에 묻거나 포괄적으로 묻는 경우에만 get_vehicle_status를
+사용한다.
+
+Available tools:
+{_TOOL_SIGNATURES}
+
+Output ONLY valid JSON in this exact format:
+{{"tool_name": "<tool_name>", "params": {{<key>: <value>}}}}
+
+Rules:
+- For tools with no parameters (e.g. get_vehicle_status), output: {{"tool_name": "get_vehicle_status", "params": {{}}}}
+- If the task does not map to any listed tool, output: {{"tool_name": null, "params": {{}}}}
+- Do NOT output anything outside the JSON object.
+
+## Examples
+Task: 에어컨 꺼줘        → {{"tool_name":"control_climate","params":{{"on":false}}}}
+Task: 에어컨 22도로 켜줘  → {{"tool_name":"control_climate","params":{{"temperature":22,"on":true}}}}
+Task: 창문 닫아          → {{"tool_name":"control_window","params":{{"is_open":false}}}}
+Task: 창문 열어줘        → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 자동 주차 꺼줘      → {{"tool_name":"control_parking","params":{{"enable":false}}}}
+Task: 자동 주차 켜줘      → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 와이퍼 꺼줘        → {{"tool_name":"control_wiper","params":{{"on":false}}}}
+Task: 와이퍼 켜줘        → {{"tool_name":"control_wiper","params":{{"on":true}}}}
+"""
+
+_PROMPT_R4 = f"""\
+You are a tool-call extractor for a vehicle control system.
+Given a task description, extract which MCP tool to call and what parameters to use.
+
+질문형 문장('~얼마야?', '~있어?', '~몇이야?', '~어때?')은 상태를 변경하는 tool이 아니라
+조회 tool을 사용한다. 이때 속도/RPM/연료/배터리/타이어 압력/경고등처럼 특정 지표
+하나만 묻는 경우 query_dashboard(metric=...)를 사용하고, '차 상태 어때?/전체 상태
+확인해줘'처럼 여러 항목을 한꺼번에 묻거나 포괄적으로 묻는 경우에만 get_vehicle_status를
+사용한다.
+
+'불/조명'을 켜고 끄는 표현은 control_lighting이고, 온도/바람/시원하게/따뜻하게 관련
+표현만 control_climate다 — 혼동하지 않는다.
+'자동 주차'는 항상 control_parking이다. driving_mode(normal/eco/sport)는 그 단어나
+'모드'가 주행 방식(연비/스포츠/일반)을 가리킬 때만 쓴다.
+'환기'는 창문을 여는 표현이므로 control_window(is_open=true)로 매핑한다.
+set_navigation의 destination은 사용자가 말한 표현을 그대로 사용한다 — "집"을
+"home"으로 번역하는 등 의미를 바꾸지 않는다.
+
+Available tools:
+{_TOOL_SIGNATURES}
+
+Output ONLY valid JSON in this exact format:
+{{"tool_name": "<tool_name>", "params": {{<key>: <value>}}}}
+
+Rules:
+- For tools with no parameters (e.g. get_vehicle_status), output: {{"tool_name": "get_vehicle_status", "params": {{}}}}
+- If the task does not map to any listed tool, output: {{"tool_name": null, "params": {{}}}}
+- Do NOT output anything outside the JSON object.
+
+## Examples
+Task: 에어컨 꺼줘        → {{"tool_name":"control_climate","params":{{"on":false}}}}
+Task: 에어컨 22도로 켜줘  → {{"tool_name":"control_climate","params":{{"temperature":22,"on":true}}}}
+Task: 창문 닫아          → {{"tool_name":"control_window","params":{{"is_open":false}}}}
+Task: 창문 열어줘        → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 환기 좀 시키게 창문 열어 → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 차 안 불 좀 켜줘    → {{"tool_name":"control_lighting","params":{{"on":true}}}}
+Task: 자동 주차 꺼줘      → {{"tool_name":"control_parking","params":{{"enable":false}}}}
+Task: 자동 주차 켜줘      → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 자동 주차 모드 활성화해줘 → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 와이퍼 꺼줘        → {{"tool_name":"control_wiper","params":{{"on":false}}}}
+Task: 와이퍼 켜줘        → {{"tool_name":"control_wiper","params":{{"on":true}}}}
+Task: 집으로 가줘        → {{"tool_name":"set_navigation","params":{{"destination":"집"}}}}
+"""
+
+_PROMPT_R5 = f"""\
+You are a tool-call extractor for a vehicle control system.
+Given a task description, extract which MCP tool to call and what parameters to use.
+
+질문형 문장('~얼마야?', '~있어?', '~몇이야?', '~어때?')은 상태를 변경하는 tool이 아니라
+조회 tool을 사용한다. 이때 속도/RPM/연료/배터리/타이어 압력/경고등처럼 특정 지표
+하나만 묻는 경우 query_dashboard(metric=...)를 사용하고, '차 상태 어때?/전체 상태
+확인해줘'처럼 여러 항목을 한꺼번에 묻거나 포괄적으로 묻는 경우에만 get_vehicle_status를
+사용한다.
+
+'불/조명'을 켜고 끄는 표현은 control_lighting이고, 온도/바람/시원하게/따뜻하게 관련
+표현만 control_climate다 — 혼동하지 않는다.
+'자동 주차'는 항상 control_parking이다. driving_mode(normal/eco/sport)는 그 단어나
+'모드'가 주행 방식(연비/스포츠/일반)을 가리킬 때만 쓴다.
+'환기'는 창문을 여는 표현이므로 control_window(is_open=true)로 매핑한다.
+set_navigation의 destination은 사용자가 말한 표현을 그대로 사용한다 — "집"을
+"home"으로 번역하는 등 의미를 바꾸지 않는다.
+
+Available tools:
+{_TOOL_SIGNATURES}
+
+Output ONLY valid JSON in this exact format:
+{{"tool_name": "<tool_name>", "params": {{<key>: <value>}}}}
+
+Rules:
+- For tools with no parameters (e.g. get_vehicle_status), output: {{"tool_name": "get_vehicle_status", "params": {{}}}}
+- If the task does not map to any listed tool, output: {{"tool_name": null, "params": {{}}}}
+- Do NOT output anything outside the JSON object.
+
+## Examples
+Task: 에어컨 꺼줘        → {{"tool_name":"control_climate","params":{{"on":false}}}}
+Task: 에어컨 22도로 켜줘  → {{"tool_name":"control_climate","params":{{"temperature":22,"on":true}}}}
+Task: 창문 닫아          → {{"tool_name":"control_window","params":{{"is_open":false}}}}
+Task: 창문 열어줘        → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 공기 좀 통하게 창문 내려줘 → {{"tool_name":"control_window","params":{{"is_open":true}}}}
+Task: 실내 조명 좀 켜줄래  → {{"tool_name":"control_lighting","params":{{"on":true}}}}
+Task: 자동 주차 꺼줘      → {{"tool_name":"control_parking","params":{{"enable":false}}}}
+Task: 자동 주차 켜줘      → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 자동 주차 좀 활성화시켜줘 → {{"tool_name":"control_parking","params":{{"enable":true}}}}
+Task: 와이퍼 꺼줘        → {{"tool_name":"control_wiper","params":{{"on":false}}}}
+Task: 와이퍼 켜줘        → {{"tool_name":"control_wiper","params":{{"on":true}}}}
+Task: 집 방향으로 길 안내해줘 → {{"tool_name":"set_navigation","params":{{"destination":"집"}}}}
+"""
+
+_EXTRACTION_SYSTEM_PROMPT = _PROMPT_R5  # 기본값: Round 5 확정본
 
 # 모듈 레벨 싱글턴 — plan step마다 새 인스턴스를 만들지 않는다.
 # None 으로 시작하는 lazy init: import 시점에 API key 검증을 하지 않는다.
@@ -98,7 +259,7 @@ def _get_extraction_llm() -> ChatOpenAI:
     global _EXTRACTION_LLM
     if _EXTRACTION_LLM is None:
         _EXTRACTION_LLM = ChatOpenAI(
-            model=QWEN_VL_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
+            model=QWEN_TEXT_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
         )
     return _EXTRACTION_LLM
 
