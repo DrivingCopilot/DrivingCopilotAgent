@@ -101,6 +101,12 @@ IMPORTANT — Source of truth:
   the asked measure to qualify — a tire pressure reads in kPa/psi/bar, a voltage in V, a torque in
   N·m/kgf·m. If the context has no number in the asked measure's unit, the specific value is NOT
   present — say so instead of offering a differently-typed spec.
+- Answer ONLY what the question asks. Tool results often bundle several unrelated sections in one
+  excerpt (e.g. uphill-restart steps next to general brake tips); use ONLY the portion that addresses
+  the question and ignore adjacent unrelated material — do not restate the whole excerpt.
+- Preserve every negation and condition EXACTLY. A "~하지 마십시오"/"do NOT" must never become
+  "~하십시오"/"do"; keep qualifiers like "ABS가 장착된 경우" intact. Dropping a "not" inverts the
+  instruction and is a critical error.
 
 Workflow:
 - Read the current plan and the user's request.
@@ -165,6 +171,12 @@ Rules:
   number) as if it were the answer. A tire SIZE like "235/60R18" is NOT a tire pressure. A value only
   qualifies if it carries the asked measure's unit (pressure→kPa/psi/bar, voltage→V, torque→N·m); if no
   such value is in the context, say the specific value is not present.
+- Answer ONLY what the question asks. A retrieved excerpt often bundles several unrelated sections
+  (e.g. uphill-restart steps next to general brake tips); use ONLY the portion that addresses the
+  question and ignore the adjacent unrelated material — do not summarize the whole excerpt.
+- Preserve every negation and condition EXACTLY. A "~하지 마십시오"/"do NOT" must never become
+  "~하십시오"/"do"; keep "ABS가 장착된 경우" and similar qualifiers intact. Dropping a "not" inverts
+  the instruction and is a critical error.
 - Keep it short (3~5 sentences) and directly answer the question.
 
 Output: a clear, concise final answer for the user. Always write in Korean (한국어)."""
