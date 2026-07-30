@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
+from app.agents.execution import MCP_TOOLS as _MCP_TOOL_NAMES
 from app.core.config import AGENT_PORT, OLLAMA_BASE_URL
 from app.graph import ws as _ws
 from app.graph.state import AgentState
@@ -98,6 +99,27 @@ def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
     return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
 
 
+def _plan_repeats_completed_tools(plan: List[str], done_tools: set) -> bool:
+    """
+    plan의 모든 스텝이 "이번 턴에 이미 성공적으로 실행된 tool"만 다시 가리키면
+    True. 리뷰 코멘트로 지적된 문제 — "execution이 한 번 성공하면 무조건
+    재호출 차단"은 "타이어 공기압 확인하고 비정상이면 정비소로 안내해줘"처럼
+    query_dashboard(1차) → 결과를 보고 set_navigation(2차)으로 이어지는 정당한
+    조건부 다단계 실행까지 막아버린다. 그래서 plan 텍스트에 언급된 tool
+    이름이 done_tools에 전혀 없는(=새로운 tool을 요청하는) 스텝이 하나라도
+    있으면 반복이 아니라고 판단해 통과시킨다. plan 텍스트에서 tool 이름을
+    못 찾은 경우(애매한 경우)도 안전하게 "반복 아님"으로 처리해 통과시킨다 —
+    정당한 새 호출을 막는 것보다 가끔 중복 호출을 허용하는 쪽이 안전하다.
+    """
+    if not plan:
+        return False
+    for step in plan:
+        mentioned = [t for t in _MCP_TOOL_NAMES if t in step]
+        if not mentioned or not all(t in done_tools for t in mentioned):
+            return False
+    return True
+
+
 def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
@@ -108,23 +130,28 @@ def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     실측으로 확인됐다. 지금은 perception.py가 answer 하나로 필드를 합쳐서
     (perception은 항상 사용자 질문에 응답해서 호출되므로 answer가 항상
     채워지는 것을 전제로 함) 이 문제를 없앴다 — 여기서는 그 answer를 그대로
-    신뢰한다. hazards만 있고 answer가 없는 경우(이례적인 폴백)만 hazard
-    통보 문구로 대체한다.
+    신뢰한다.
+
+    리뷰 코멘트: answer가 비어도 hazards가 있으면 그걸 answer인 것처럼
+    내보내던 이전 방식은, perception이 항상 질문과 함께 호출된다는 전제상
+    "질문이 없어서"가 아니라 "VLM이 답을 못 채운 것"이므로, 화면의 hazard를
+    질문과 무관하게 확답처럼 보여주는 예전 버그(related_hazard 오판정)와
+    같은 위험이 있었다. 그래서 답을 못 만들었다는 사실 자체를 정직하게
+    알리고, hazards는 참고 정보로만 덧붙인다.
     """
     if vision_results.get("status") != "success":
         return f"카메라 분석에 실패했습니다: {vision_results.get('error_msg', '알 수 없는 오류')}"
 
-    hazards = vision_results.get("hazards", [])
     answer = vision_results.get("answer", "")
-
     if answer:
         return answer
 
+    hazards = vision_results.get("hazards", [])
     if hazards:
         labels = ", ".join(HAZARD_LABELS.get(h, h) for h in hazards)
-        return f"{labels}가 감지되었습니다."
+        return f"질문에 대한 답을 정확히 생성하지 못했습니다. (참고로 카메라에서 {labels} 감지됨)"
 
-    return "비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다."
+    return "질문에 대한 답을 카메라 분석 결과에서 생성하지 못했습니다."
 
 
 def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
@@ -367,19 +394,24 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         next_agent = "__end__"
         new_plan = []
 
-    # 안전장치: execution이 이미 이번 턴에 성공했는데도(last_tool_call.status ==
-    # "success") LLM이 다시 'execution'을 선택하면 — perception Rule 2 위반 차단과
-    # 동일한 원리로 — 강제로 종료 처리한다. execution은 호출될 때마다 plan의 모든
-    # 스텝을 한 번에 소비하므로(app/agents/execution.py의 run_execution), 같은 턴
-    # 안에서 성공 직후 재호출될 정당한 이유가 없다 — 방치하면 "에어컨 25도+창문
-    # 닫기"처럼 멀티 액션 요청에서 성공한 실행을 계속 반복하는 무한 루프가 된다.
+    # 안전장치: execution이 이번 턴에 성공했는데도 LLM이 '이미 완료된 것과 같은'
+    # plan으로 다시 'execution'을 선택하면 강제로 종료 처리한다(perception Rule 2
+    # 위반 차단과 동일한 원리). 단, "타이어 공기압 확인하고 비정상이면 정비소로
+    # 안내해줘"처럼 query_dashboard(1차) 결과를 보고 set_navigation(2차)으로
+    # 이어지는 정당한 조건부 다단계 실행까지 막으면 안 되므로, "이번에 요청한 tool이
+    # 전부 이미 성공한 tool과 겹치는가"로 판단한다 — 겹치지 않는 새 tool이 하나라도
+    # 있으면 통과시킨다. (리뷰 코멘트: 기존엔 last_tool_call 성공 여부만 보고 무조건
+    # 차단해서 이 조건부 다단계 케이스를 막을 위험이 있었음)
     if next_agent == "execution" and last_tool_call.get("status") == "success":
-        logger.warning(
-            "supervisor_node: execution 재호출 차단(last_tool_call=%s) — __end__ 로 강제 전환",
-            last_tool_call,
-        )
-        next_agent = "__end__"
-        new_plan = []
+        done_tools = {tc.get("tool") for tc in tool_calls if tc.get("status") == "success"}
+        if _plan_repeats_completed_tools(new_plan, done_tools):
+            logger.warning(
+                "supervisor_node: execution 재호출 차단(new_plan=%s, done_tools=%s) "
+                "— __end__ 로 강제 전환",
+                new_plan, done_tools,
+            )
+            next_agent = "__end__"
+            new_plan = []
 
     # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
