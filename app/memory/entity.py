@@ -36,6 +36,7 @@ _EXTRACTOR_SYSTEM_PROMPT = (
     "If no persistent preferences are found, return {}."
 )
 
+
 class EntityMemory:
     """사용자 차량 선호도를 로컬 JSON 파일에 저장하는 KV Store."""
 
@@ -66,6 +67,7 @@ class EntityMemory:
         existing = self.load()
 
         deleted_keys = []
+        updated_keys = []
         for key, value in prefs.items():
             if value is None:
                 if key in existing:
@@ -73,6 +75,7 @@ class EntityMemory:
                     deleted_keys.append(key)
             else:
                 existing[key] = value
+                updated_keys.append(key)
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
@@ -81,7 +84,6 @@ class EntityMemory:
         )
         if deleted_keys:
             logger.info("entity_memory 삭제(negation): %s", deleted_keys)
-        updated_keys = [k for k, v in prefs.items() if v is not None]
         if updated_keys:
             logger.info("entity_memory 업데이트: %s", updated_keys)
 

@@ -199,7 +199,7 @@ class ExperienceMemory:
 
         self._client.create_payload_index(
             collection_name=EXPERIENCE_COLLECTION_NAME,
-            field_name="route_type",
+            field_name="metadata.route_type",
             field_schema=qmodels.PayloadSchemaType.KEYWORD,
         )
 

@@ -122,3 +122,11 @@ async def test_extract_non_json_response():
     llm = _make_llm("죄송합니다, 선호도를 추출할 수 없습니다.")
     result = await extract_preferences("뭔가 말해줘", llm)
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_extract_negation_null_value():
+    """LLM이 negation을 JSON null로 반환하면 None 값이 그대로 dict에 남아야 한다."""
+    llm = _make_llm('{"music_genre": null}')
+    result = await extract_preferences("더 이상 재즈 안 들어", llm)
+    assert result == {"music_genre": None}
