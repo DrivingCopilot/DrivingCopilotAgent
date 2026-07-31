@@ -1,37 +1,93 @@
-## 📂 Project Structure
+# 🚗 DrivingCopilotAgent
 
-`DrivingCopilotAgent` 레포지토리는 On-Device 환경에서 동작하는 Cognitive Architecture 기반의 멀티 에이전트 시스템을 관리합니다.
+차량 내부 임베디드 환경을 겨냥한 **On-Device Multimodal Driving Copilot**의 에이전트(두뇌) 레포입니다.
+카메라 영상 · 운전자 텍스트 · 차량 매뉴얼 · 센서 데이터를 통합해 실시간 운전 보조 응답을 생성하는
+Cognitive Architecture 기반 Multi-Agent 시스템으로, 아래 4개의 특화 에이전트가
+**A2A(수평) + MCP(수직) + AG-UI(프론트)** 3층 프로토콜 위에서 협업합니다.
+
+| Agent | 포트 | 모델 | 역할 |
+|---|---|---|---|
+| **Supervisor** | 8001 | 7B | ReAct 루프(Perceive→Reason→Act→Observe→Reflect) 제어, Plan-and-Execute, Reflexion |
+| **Knowledge** | 8002 | 1.5B/7B | Vector RAG · Graph RAG(Neo4j) · Text2SQL 결과를 융합해 매뉴얼/관계/데이터 질의 응답 |
+| **Execution** | 8003 | 1.5B | 12종 Vehicle Tool 실행, Multi-Turn, 실패 재시도 |
+| **Perception** | 8004 | 7B(Vision) | 카메라 영상 분석, 비/터널/경고등 감지 → 멀티모달 트리거 |
+
+> **구현 범위:** 이 레포는 계획서의 **Phase 1(VLM 배포) 이후 전 계층** — RAG/Graph/SQL,
+> Cognitive Architecture, A2A Multi-Agent, MCP Tool-Use, 평가 체계(RAGAS/CRAG)를 담당합니다.
+> 실제 오케스트레이션은 `app/graph/builder.py`의 LangGraph `StateGraph` 하나로 조립됩니다.
+
+## 🏗️ 런타임 구성 요소 (어느 레포가 무엇을 실행하나)
+
+전체 데모는 **4개의 프로세스 그룹**이 함께 떠 있어야 동작합니다.
+
+- **본 레포(Agent)** — Supervisor(8001) + Knowledge/Execution/Perception A2A 서버(8002~8004) + 로컬 모델 서버(11500)
+- **`DrivingCopilotBackend`** — REST API(8000) + **MCP 서버(9000)**. Qdrant(Vector) · Neo4j(Graph) · Vehicle DB(SQL) · 12종 Vehicle Tool의 **실행 주체는 Backend**이고, 이 레포의 Knowledge/Execution 노드는 MCP로 그 도구를 호출만 합니다.
+- **`DrivingCopilotFrontend`** — React Automotive UI(3000), WebSocket으로 Supervisor와 스트리밍
+- **로컬 모델 서버** — Ollama를 대체하는 이 레포 자체 프로세스(`app/model_server`)
+
+> 이 레포 안의 `app/services/`(pdf_parser·semantic_chunker·embedder·qdrant_client·index_manuals)는
+> **런타임 검색기가 아니라 매뉴얼을 Qdrant에 넣는 1회성 오프라인 인덱싱 파이프라인**입니다.
+> 질의 시점의 검색·그래프 탐색·SQL은 위 MCP 서버(9000)를 통해 실행됩니다.
+
+## 📂 Project Structure
 
 ```text
 DrivingCopilotAgent/
+├── main.py                     # Supervisor 서비스 진입점 (FastAPI/Uvicorn, :8001)
 ├── app/
-│   ├── core/               # 시스템 핵심 설정 및 공유 상태 정의
-│   │   ├── config.py       # 모델(7B/1.5B) 및 인프라 설정
-│   │   └── state.py        # LangGraph AgentState (공유 메모리) 정의
-│   ├── agents/             # 독립된 A2A Server 역할을 하는 에이전트 로직
-│   │   ├── supervisor.py   # Supervisor (7B): 계획 수립 및 ReAct 루프 제어
-│   │   ├── perception.py   # Perception: 영상 분석 및 멀티모달 트리거
-│   │   ├── knowledge.py    # Knowledge: RAG, Graph, SQL 지식 통합
-│   │   └── execution.py    # Execution (1.5B): MCP 도구 실행 및 실패 처리
-│   ├── graph/              # LangGraph 오케스트레이션 구현 계층
-│   │   ├── nodes.py        # 에이전트별 상태 전이 노드 함수
-│   │   ├── edges.py        # 조건부 라우팅 및 리플렉션(Reflexion) 로직
-│   │   └── builder.py      # StateGraph 컴파일 및 워크플로우 정의
-│   ├── server/             # 에이전트 인터페이스 계층 (A2A/WebSocket)
-│   │   ├── endpoints.py    # 에이전트 간 통신을 위한 API 엔드포인트
-│   │   └── websocket.py    # 실시간 토큰 스트리밍 및 AG-UI 연동
-│   ├── services/           # 지식 베이스 연동 서비스 모듈
-│   │   ├── vector_rag.py   # Qdrant 기반 벡터 검색
-│   │   ├── graph_rag.py    # Neo4j Knowledge Graph 탐색
-│   │   └── text2sql.py     # 차량 데이터베이스 SQL 생성 및 실행
-│   └── tools/              # MCP(Model Context Protocol) 기반 차량 제어 도구
-├── evaluation/             # 에이전트 품질 평가 체계 (Phase 4)
-│   ├── gold_set/           # 평가용 Gold Set 200건 데이터
-│   └── metrics.py          # RAGAS 및 Hallucination Detection 로직
-├── tests/                  # 단위 테스트 및 8종 시나리오 검증
-├── main.py                 # 서비스 실행 진입점 (FastAPI/Uvicorn)
-├── requirements.txt        # 의존성 패키지 목록
-└── README.md               # 프로젝트 매뉴얼 및 구조 가이드
+│   ├── core/                   # 공통 설정·유틸
+│   │   ├── config.py           # 모델(7B/1.5B)·엔드포인트·인프라 환경변수
+│   │   ├── mcp_client.py       # Backend MCP 서버(9000) streamable-http 클라이언트
+│   │   ├── json_utils.py       # LLM 출력 JSON 파싱 헬퍼
+│   │   └── trace.py            # 실행 트레이스 로깅
+│   ├── agents/                 # ReAct 그래프의 노드 로직 (에이전트별)
+│   │   ├── supervisor.py       # 계획 수립 + 위임 라우팅 (ReAct 제어)
+│   │   ├── knowledge.py        # vector/graph/sql MCP 도구 호출 + 근거 융합
+│   │   ├── execution.py        # 12종 Vehicle Tool 실행 + 재시도
+│   │   ├── perception.py       # 영상 분석 + 멀티모달 트리거
+│   │   ├── crag.py             # Corrective RAG: 검색 품질 평가→쿼리 재작성→재검색
+│   │   ├── observe.py          # 결과 관찰/성공·실패 판정
+│   │   ├── reflect.py          # Reflexion 자기평가 → 경험 메모리 적재
+│   │   └── finalize.py         # 최종 응답 조립
+│   ├── graph/                  # LangGraph 오케스트레이션
+│   │   ├── builder.py          # StateGraph 노드/엣지 조립 + compile
+│   │   ├── a2a_nodes.py        # knowledge/execution/perception A2A 호출 노드
+│   │   ├── state.py            # AgentState (공유 메모리) 정의
+│   │   └── ws.py               # 노드→WebSocket 스트리밍 브리지
+│   ├── a2a/                    # A2A 프로토콜 계층 (수평 통신)
+│   │   ├── server.py           # A2A 서버 진입점 (knowledge/execution/perception)
+│   │   ├── registry.py         # Agent Card·에이전트별 URL 레지스트리
+│   │   ├── dispatch.py         # 위임 대상 에이전트로 태스크 분배
+│   │   ├── client.py           # A2A HTTP 클라이언트
+│   │   ├── router.py           # Supervisor측 A2A 라우트
+│   │   ├── models.py / serde.py# 요청/응답 스키마·직렬화
+│   ├── api/                    # Supervisor 외부 인터페이스
+│   │   ├── http.py             # POST /invoke 등 단발성 호출 (Backend→Supervisor)
+│   │   └── websocket.py        # WS /ws 세션별 격리 토큰 스트리밍 (AG-UI)
+│   ├── memory/                 # 메모리 3계층 중 장기/엔티티
+│   │   ├── experience.py       # 장기: Reflexion 실패 경험 Vector Store
+│   │   └── entity.py           # 엔티티: 사용자 차량 선호도 KV Store
+│   ├── services/               # ⚙️ 오프라인 인덱싱 파이프라인 (런타임 아님)
+│   │   ├── pdf_parser.py       # 매뉴얼 PDF 텍스트 추출
+│   │   ├── semantic_chunker.py # 의미 단위 청킹 (bge-m3)
+│   │   ├── embedder.py         # 청크 임베딩 → Qdrant 저장
+│   │   ├── qdrant_client.py    # 싱글톤 Qdrant 클라이언트
+│   │   ├── index_manuals.py    # 파싱→청킹→임베딩→인덱싱 실행 스크립트
+│   │   └── text2sql.py         # Text2SQL 보조 로직
+│   └── model_server/           # 로컬 모델 서버 (Ollama 대체, :11500)
+│       ├── server.py           # OpenAI 호환 API 진입점
+│       └── backend.py          # 7B/1.5B transformers 로드·추론
+├── evaluation/                 # 평가 체계 (Phase 4)
+│   ├── _gold.py                # Gold Set 로더
+│   ├── run_ragas_eval.py       # RAGAS(Faithfulness 등) 채점 — local/openai/gemini judge
+│   ├── run_knowledge_eval.py   # Knowledge 노드 품질 평가
+│   ├── run_tool_eval.py        # Tool-Call 정확도 평가
+│   └── run_exception_sweep.py  # 예외/실패 경로 스윕
+├── scripts/
+│   ├── unix/run_agents.sh      # (Mac/Linux) 모델서버+4프로세스 일괄 기동
+│   └── windows/*.ps1           # (Windows) 기동/중지 스크립트
+├── requirements.txt
+└── README.md
 ```
 
 ## 🚀 실행 방법 (E2E)
