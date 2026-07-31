@@ -96,7 +96,7 @@ async def fetch_vehicle_state(timeout: float = 5.0) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 상태 변경 검증용 매핑 (다음 단계에서 eval_item()/score_tool_item() 에 연결 예정 — 아직 미사용)
+# 상태 변경 검증용 매핑 — score_tool_item() 의 state_correct 판정(아래 참조)에서 사용된다.
 # ---------------------------------------------------------------------------
 
 # tool 파라미터(dict) -> VehicleState 에 적용될 (field, value) 목록.
