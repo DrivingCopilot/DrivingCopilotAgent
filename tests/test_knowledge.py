@@ -206,8 +206,14 @@ async def test_knowledge_node_handles_agent_exception():
     with _patch_agent(fake):
         result = await knowledge_node(state)
 
-    # parameter 에러 카운트가 1 증가하여 2가 되어야 한다
-    assert result["error_count"]["parameter"] == 2
+    # knowledge_node 는 error_count 를 직접 올리지 않는다(설계: observe_node 가
+    # tool_calls 를 보고 유일하게 카운트해 중복 집계를 막는다). 대신 실패를
+    # error tool_call 로 기록하고, CRAG 우회 플래그(knowledge_failed)를 세운다.
+    err_tc = result["tool_calls"][-1]
+    assert err_tc["status"] == "error"
+    assert err_tc["error_type"] == "parameter"
+    assert "vLLM endpoint down" in err_tc["error_msg"]
+    assert result["context_data"]["knowledge_failed"] is True
     # Reflexion 용 feedback 이 채워졌는가
     assert "vLLM endpoint down" in result["feedback"]
     # 실패해도 제어는 supervisor 로

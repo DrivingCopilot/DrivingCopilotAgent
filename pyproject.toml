@@ -26,3 +26,5 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "evaluation"]
+
+# 참고: pytest 설정은 pytest.ini 에 있다(asyncio_mode·마커·addopts).

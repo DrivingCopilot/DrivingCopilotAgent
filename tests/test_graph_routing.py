@@ -112,7 +112,9 @@ async def test_react_one_loop_knowledge(patch_supervisor, monkeypatch):
     async def fake_refine(state):
         return {"context_data": {}}
 
-    monkeypatch.setattr(builder_module, "knowledge_node", fake_knowledge)
+    # 그래프의 "knowledge" 노드는 A2A 경로(knowledge_a2a_node)로 위임된다 —
+    # 라우팅만 검증하므로 이 노드를 결정적 stub 으로 대체한다.
+    monkeypatch.setattr(builder_module, "knowledge_a2a_node", fake_knowledge)
     monkeypatch.setattr(builder_module, "grade_retrieval_node", fake_grade)
     monkeypatch.setattr(builder_module, "refine_knowledge_node", fake_refine)
     builder_module.build_graph.cache_clear()
@@ -155,7 +157,9 @@ async def test_crag_reretrieval_loop(patch_supervisor, monkeypatch):
     async def fake_refine(state):
         return {"context_data": {}}
 
-    monkeypatch.setattr(builder_module, "knowledge_node", fake_knowledge)
+    # 그래프의 "knowledge" 노드는 A2A 경로(knowledge_a2a_node)로 위임된다 —
+    # 라우팅만 검증하므로 이 노드를 결정적 stub 으로 대체한다.
+    monkeypatch.setattr(builder_module, "knowledge_a2a_node", fake_knowledge)
     monkeypatch.setattr(builder_module, "grade_retrieval_node", fake_grade)
     monkeypatch.setattr(builder_module, "transform_query_node", fake_transform)
     monkeypatch.setattr(builder_module, "refine_knowledge_node", fake_refine)
@@ -166,7 +170,7 @@ async def test_crag_reretrieval_loop(patch_supervisor, monkeypatch):
         {"next_agent": "__end__", "plan": [], "feedback": ""},
     ])
 
-    result = await run_graph("애매한 질문")
+    await run_graph("애매한 질문")
 
     # 최초 검색 1회 + 재검색 1회 = knowledge 2회 (MAX_CRAG_ATTEMPTS=1 캡)
     assert knowledge_calls["count"] == MAX_CRAG_ATTEMPTS + 1
@@ -254,7 +258,7 @@ async def test_supervisor_self_loop(patch_supervisor):
         {"next_agent": "__end__", "plan": [], "feedback": ""},
     ])
 
-    result = await run_graph("ping")
+    await run_graph("ping")
 
     assert tracker["count"] == 2, "supervisor self-loop once then end"
 
@@ -278,10 +282,10 @@ async def test_recursion_limit_safety(patch_supervisor):
         [{"next_agent": "execution", "plan": ["s1"], "feedback": ""}] * 30
     )
 
-    with pytest.raises(Exception) as exc_info:
-        await run_graph("loop test")
+    # run_graph 는 GraphRecursionError 를 최후 방어선으로 잡아 예외를 밖으로
+    # 던지지 않고, 사용자 안내 메시지와 함께 우아하게 종료한다(next_agent=__end__).
+    # 안 잡으면 WS 로 text 가 전혀 안 나가 "응답 없음"으로 보이기 때문이다.
+    result = await run_graph("loop test")
 
-    err_str = str(exc_info.value).lower()
-    assert (
-        "recursion" in err_str or "limit" in err_str or "maximum" in err_str
-    ), f"expected recursion-related error, got: {exc_info.value}"
+    assert result["next_agent"] == "__end__"
+    assert "중단" in result["messages"][-1].content
