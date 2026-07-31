@@ -51,15 +51,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
-from app.graph.state import AgentState
-from app.graph import ws as _ws
 from app.core.json_utils import extract_first_json_object
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ Always write the output in Korean (한국어), regardless of the language of the
 # 내부 헬퍼
 # ---------------------------------------------------------------------------
 
-def _latest_user_query(messages: List[Any]) -> str:
+def _latest_user_query(messages: list[Any]) -> str:
     """messages에서 가장 최근 HumanMessage 내용을 반환 (supervisor 관례와 동일)."""
     return next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
@@ -153,7 +153,7 @@ def _effective_query(state: AgentState) -> str:
     return _latest_user_query(state.get("messages", []))
 
 
-def _parse_grade(content: str) -> Dict[str, Any]:
+def _parse_grade(content: str) -> dict[str, Any]:
     """LLM 출력에서 첫 JSON 객체를 안전 파싱해 grade dict로 정규화한다."""
     text = content.strip()
     if "```json" in text:
@@ -183,7 +183,7 @@ def _parse_grade(content: str) -> Dict[str, Any]:
 # 노드
 # ---------------------------------------------------------------------------
 
-async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
+async def grade_retrieval_node(state: AgentState) -> dict[str, Any]:
     """
     검색 결과 품질 평가자. context_data["last_knowledge_result"]를 LLM으로 평가해
     context_data["crag_grade"] = {grade, score, reasoning}를 기록한다.
@@ -233,7 +233,7 @@ async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
     return {"context_data": {"crag_grade": grade}}
 
 
-async def transform_query_node(state: AgentState) -> Dict[str, Any]:
+async def transform_query_node(state: AgentState) -> dict[str, Any]:
     """
     쿼리 재작성 + 재검색 카운터 증가. context_data["refined_query"]에 재작성된 쿼리를
     기록하고 crag_attempts를 +1 한다. 실제 재검색은 그래프 배선(transform_query→knowledge)이
@@ -267,7 +267,7 @@ async def transform_query_node(state: AgentState) -> Dict[str, Any]:
     return {"context_data": {"refined_query": refined_query, "crag_attempts": attempts}}
 
 
-async def refine_knowledge_node(state: AgentState) -> Dict[str, Any]:
+async def refine_knowledge_node(state: AgentState) -> dict[str, Any]:
     """
     지식 정제(decompose-recompose). 검색 텍스트에서 무관한 부분을 제거하고 핵심만
     재구성해 context_data["last_knowledge_result"]를 정제본으로 덮어쓴다.

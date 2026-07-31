@@ -5,7 +5,8 @@
 # 환경변수로 URL을 재정의할 수 있다.
 
 import os
-from app.a2a.models import AgentCard, AgentCapabilities
+
+from app.a2a.models import AgentCapabilities, AgentCard
 
 _SUPERVISOR_URL = os.getenv("SUPERVISOR_BASE_URL", "http://localhost:8001")
 _KNOWLEDGE_URL  = os.getenv("KNOWLEDGE_BASE_URL",  "http://localhost:8002")

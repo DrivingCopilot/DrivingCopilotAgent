@@ -1,21 +1,29 @@
 import logging
 import re
-from typing import Dict, Any
-from collections import Counter
-
 import sqlite3
+from collections import Counter
+from typing import Any
+
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from app.core.config import QDRANT_URL, COLLECTION_NAME, MODEL_NAME, DB_PATH, MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
-from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate
+
+from app.core.config import (
+    COLLECTION_NAME,
+    DB_PATH,
+    MODEL_NAME,
+    MODEL_SERVER_URL,
+    QDRANT_URL,
+    QWEN_TEXT_MODEL_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
-def schema_Linking(query: str) -> Dict[str, str]:
+def schema_Linking(query: str) -> dict[str, str]:
     """
     Schema Linking: 자연어 질문(query)과 관련된 테이블 스키마만 필터링하여 반환합니다.
     """
@@ -48,7 +56,7 @@ def schema_Linking(query: str) -> Dict[str, str]:
         
     return selected_schemas
 
-def few_shot_sql(query: str, k: int=3) -> Dict[str, str]:
+def few_shot_sql(query: str, k: int=3) -> dict[str, str]:
     embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME)
     client = QdrantClient(url=QDRANT_URL)
 
@@ -173,7 +181,7 @@ def _clean_sql(raw_sql: str) -> str:
     return sql.rstrip(";").strip()
 
 
-def validate_syntax(sql: str) -> Dict[str, Any]:
+def validate_syntax(sql: str) -> dict[str, Any]:
     """
     [1단계] 구문/보안 검증 — DB 연결 없이 정적으로 수행.
     읽기 전용 단일 문장(SELECT/WITH/PRAGMA)만 통과시킨다.
@@ -202,7 +210,7 @@ def validate_syntax(sql: str) -> Dict[str, Any]:
     return {"success": True, "stage": "syntax", "sql": sql}
 
 
-def validate_plan(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
+def validate_plan(sql: str, conn: sqlite3.Connection) -> dict[str, Any]:
     """
     [2단계] EXPLAIN 정적 분석 — 실제 실행 없이 테이블/컬럼/구문 유효성을 검증한다.
     잘못된 테이블·컬럼 참조나 구문 오류가 여기서 sqlite3.Error 로 잡힌다.
@@ -215,7 +223,7 @@ def validate_plan(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
         return {"success": False, "stage": "explain", "error": f"EXPLAIN 검증 실패: {e}"}
 
 
-def execute_validated(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
+def execute_validated(sql: str, conn: sqlite3.Connection) -> dict[str, Any]:
     """
     [3단계] 실행 — 1·2단계를 통과한 SQL을 실제 실행하고 결과를 dict 리스트로 반환한다.
     """
@@ -224,13 +232,13 @@ def execute_validated(sql: str, conn: sqlite3.Connection) -> Dict[str, Any]:
         columns = [d[0] for d in cursor.description] if cursor.description else []
         rows = cursor.fetchall()
         return {"success": True, "stage": "execute",
-                "data": [dict(zip(columns, row)) for row in rows]}
+                "data": [dict(zip(columns, row, strict=False)) for row in rows]}
     except sqlite3.Error as e:
         # DB Exception 캡처 (LangGraph 재생성 루프에 활용)
         return {"success": False, "stage": "execute", "error": f"DB exception: {e}"}
 
 
-def validate_sql_and_execute(generated_sql: str, db_path: str = DB_PATH) -> Dict[str, Any]:
+def validate_sql_and_execute(generated_sql: str, db_path: str = DB_PATH) -> dict[str, Any]:
     """
     SQL 검증 3단계 파이프라인 오케스트레이터.
 

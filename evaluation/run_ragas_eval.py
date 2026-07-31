@@ -48,7 +48,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -77,14 +77,14 @@ _CROSS_CAPABILITY_SETS = {"multi", "sql"}
 # 1) 생성 단계 — knowledge_node E2E → RAGAS 샘플
 # ---------------------------------------------------------------------------
 
-def _contexts_from_messages(messages: List[Any]) -> List[str]:
+def _contexts_from_messages(messages: list[Any]) -> list[str]:
     """knowledge_node 가 반환한 new_messages 에서 실제 사용된 검색 context를 뽑는다.
 
     각 ToolMessage(vector/graph/sql tool 출력) 하나를 context 한 조각으로 본다.
     에러·'결과 없음' 출력은 grounding 에 못 쓰므로 제외한다(knowledge 노드와 동일 기준).
     RAGAS 의 retrieved_contexts 로 그대로 넘긴다.
     """
-    contexts: List[str] = []
+    contexts: list[str] = []
     for m in messages:
         if not isinstance(m, ToolMessage):
             continue
@@ -95,7 +95,7 @@ def _contexts_from_messages(messages: List[Any]) -> List[str]:
     return contexts
 
 
-async def build_sample(item: Dict[str, Any]) -> Dict[str, Any]:
+async def build_sample(item: dict[str, Any]) -> dict[str, Any]:
     """gold 항목 하나를 knowledge_node 로 E2E 실행해 RAGAS 샘플 dict 를 만든다.
 
     retrieved_contexts는 우선 new_messages의 ToolMessage에서 뽑는다(1.5B ReAct가
@@ -141,8 +141,8 @@ async def build_sample(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def build_samples(sets: List[str], gold_ref: str, limit: Optional[int]) -> List[Dict[str, Any]]:
-    samples: List[Dict[str, Any]] = []
+async def build_samples(sets: list[str], gold_ref: str, limit: int | None) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
     for set_name in sets:
         items, prov = load_gold_set(set_name, gold_ref)
         if limit:
@@ -161,7 +161,7 @@ async def build_samples(sets: List[str], gold_ref: str, limit: Optional[int]) ->
 # 2) 채점 단계 — RAGAS judge/임베딩 구성 + evaluate
 # ---------------------------------------------------------------------------
 
-def build_judge_llm(judge: str, model: Optional[str]):
+def build_judge_llm(judge: str, model: str | None):
     """RAGAS judge LLM 을 구성해 LangchainLLMWrapper 로 감싼다.
 
     judge="local"  : 로컬 모델 서버(OpenAI 호환). 완전 오프라인.
@@ -215,11 +215,11 @@ def build_judge_embeddings():
 
 
 def score_with_ragas(
-    samples: List[Dict[str, Any]],
+    samples: list[dict[str, Any]],
     judge: str,
-    model: Optional[str],
+    model: str | None,
     concurrency: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """RAGAS 로 샘플을 채점하고 요약/행별 점수를 반환한다."""
     from ragas import EvaluationDataset, SingleTurnSample, evaluate
     from ragas.metrics import (
@@ -286,7 +286,7 @@ def score_with_ragas(
     metric_cols = [c for c in df.columns if c not in
                    ("user_input", "response", "retrieved_contexts", "reference")]
 
-    def _mean(col: str) -> Optional[float]:
+    def _mean(col: str) -> float | None:
         vals = [v for v in df[col].tolist() if v == v]  # NaN 제외
         return round(sum(vals) / len(vals), 4) if vals else None
 
@@ -294,7 +294,7 @@ def score_with_ragas(
 
     # 행별 점수(리포트 저장용) — id/route 를 usable 순서로 다시 붙인다.
     rows = []
-    for s, (_, r) in zip(usable, df.iterrows()):
+    for s, (_, r) in zip(usable, df.iterrows(), strict=False):
         rows.append({
             "id": s["id"],
             "route_type": s["route_type"],
@@ -311,7 +311,7 @@ def score_with_ragas(
     }
 
 
-def print_report(report: Dict[str, Any]) -> None:
+def print_report(report: dict[str, Any]) -> None:
     print("\n" + "=" * 72)
     print(f"RAGAS 평가 결과 · judge={report['judge']} ({report['judge_model']})")
     print("=" * 72)

@@ -4,12 +4,13 @@
 # Agent Card: Agent의 이름/URL/능력을 담은 명함.
 # Task Request/Response: Agent 간 작업 위임 메시지 형식.
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel
 
 
 class AgentCapabilities(BaseModel):
-    mcp_tools: List[str] = []
+    mcp_tools: list[str] = []
 
 
 class AgentCard(BaseModel):
@@ -24,12 +25,12 @@ class A2ATaskRequest(BaseModel):
     task_id: str
     agent_name: str
     instruction: str
-    context: Dict[str, Any] = {}
+    context: dict[str, Any] = {}
 
 
 class A2ATaskResponse(BaseModel):
     task_id: str
     status: str                       # "success" | "error"
-    result: Dict[str, Any] = {}
-    error: Optional[str] = None
-    error_type: Optional[str] = None  # error 시만: "timeout" | "parameter" | "invalid_tool" | "sql"
+    result: dict[str, Any] = {}
+    error: str | None = None
+    error_type: str | None = None  # error 시만: "timeout" | "parameter" | "invalid_tool" | "sql"

@@ -35,11 +35,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -69,15 +70,13 @@ class _SignalCapture(logging.Handler):
 
     def __init__(self) -> None:
         super().__init__(level=logging.DEBUG)
-        self.messages: List[str] = []
+        self.messages: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.messages.append(record.getMessage())
-        except Exception:
-            pass
 
-    def flags(self) -> Dict[str, bool]:
+    def flags(self) -> dict[str, bool]:
         blob = "\n".join(self.messages)
         return {flag: (needle in blob) for flag, needle in _LOG_SIGNALS.items()}
 
@@ -93,7 +92,7 @@ def _is_prompt_echo(text: str) -> bool:
     return ("[Retrieved Context]" in t) or t.lstrip().startswith("[User Query]")
 
 
-async def sweep_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]:
+async def sweep_item(item: dict[str, Any], item_timeout: float) -> dict[str, Any]:
     state = {
         "messages": [HumanMessage(content=item["query"])],
         "plan": [],
@@ -144,7 +143,7 @@ async def sweep_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any
             detail = repr(answer)[:120]
         else:
             category = "ok"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         category = "item_timeout"
         detail = f">{item_timeout}s"
     except Exception as exc:  # 하드 크래시
@@ -185,7 +184,7 @@ async def main() -> None:
 
     print(f"[sweep] {len(items)}건 시작 (item-timeout={args.item_timeout}s)\n")
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for i, item in enumerate(items, 1):
         r = await sweep_item(item, args.item_timeout)
         results.append(r)

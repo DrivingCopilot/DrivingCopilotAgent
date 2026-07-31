@@ -3,15 +3,17 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
+
 from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME, QWEN_VL_MODEL_NAME
-from app.graph.state import AgentState
-from app.graph import ws as _ws
 from app.core.mcp_client import call_mcp_tool_once
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ KNOWLEDGE_RETRIEVAL_MODEL = os.getenv("KNOWLEDGE_MODEL", QWEN_TEXT_MODEL_NAME)
 KNOWLEDGE_FUSION_MODEL = os.getenv("KNOWLEDGE_FUSION_MODEL", QWEN_VL_MODEL_NAME)
 
 
-async def _call_knowledge_tool(tool_name: str, params: Dict[str, Any]) -> str:
+async def _call_knowledge_tool(tool_name: str, params: dict[str, Any]) -> str:
     """
     공용 MCP 서버의 knowledge tool 을 호출하고 결과 텍스트만 반환한다.
     실패 시 ReAct 에이전트가 읽고 재시도/대안 판단할 수 있는 오류 문자열을 돌려준다.
@@ -52,7 +54,7 @@ async def vector_rag_search(query: str) -> str:
 
 
 @tool
-async def graph_rag_search(query: str, entities: List[str] = None) -> str:
+async def graph_rag_search(query: str, entities: list[str] = None) -> str:
     """
     Search for relational information using Graph RAG (Neo4j).
     Best for: Multi-hop reasoning like "What components are related to this warning light?" or "Maintenance interval for a part".
@@ -240,7 +242,7 @@ def _dedup_lines(text: str) -> str:
     같은 tool 반복 호출/겹치는 청크로 동일 excerpt가 여러 번 들어오면 fusion 입력을
     오염시키고 precision·토큰을 낮추므로 정확 중복 라인을 걷어낸다."""
     seen = set()
-    out: List[str] = []
+    out: list[str] = []
     for line in text.split("\n"):
         key = line.strip()
         if key and key in seen:
@@ -251,14 +253,14 @@ def _dedup_lines(text: str) -> str:
     return "\n".join(out)
 
 
-def _extract_tool_context(new_messages: List[Any]) -> Dict[str, str]:
+def _extract_tool_context(new_messages: list[Any]) -> dict[str, str]:
     """ReAct 실행 중 호출된 tool들의 출력을 tool별로 모은다.
 
     Returns: {"graph": "...", "vector": "...", "sql": "...", "all": "합쳐진 원문"}
     tool이 하나도 안 불렸으면 all=""(빈 문자열).
     중복 excerpt(같은 tool 반복 호출/겹치는 청크)는 엔트리·라인 단위로 제거한다.
     """
-    buckets: Dict[str, List[str]] = {"graph": [], "vector": [], "sql": []}
+    buckets: dict[str, list[str]] = {"graph": [], "vector": [], "sql": []}
     seen_entries = set()  # 엔트리(전체 tool 출력) 단위 정확 중복 제거
     for m in new_messages:
         if not isinstance(m, ToolMessage):
@@ -341,14 +343,14 @@ _KO_STOPWORDS = frozenset({
 })
 
 
-def _extract_query_terms(query: str) -> List[str]:
+def _extract_query_terms(query: str) -> list[str]:
     """자연어 질의에서 graph 매칭용 엔티티 후보를 뽑는다.
 
     백엔드 graph_rag는 entities 미지정 시 query.split()(조사 포함)을 그대로 substring
     매칭에 써서 '선루프가'/'뒷좌석을'/'hud가'처럼 조사가 붙어 엔티티명과 안 맞는다.
     여기서 구두점·조사·의문사를 제거한 깨끗한 term을 만들어 entities로 넘긴다.
     """
-    terms: List[str] = []
+    terms: list[str] = []
     for raw in (query or "").split():
         tok = raw.strip().strip("?？!！.,·…‘’\"'()[]{}")
         if not tok or tok in _KO_STOPWORDS:
@@ -421,7 +423,7 @@ async def _verify_answer_grounded(answer: str, context: str) -> bool:
         return True
 
 
-async def _deterministic_retrieve(query: str) -> Dict[str, str]:
+async def _deterministic_retrieve(query: str) -> dict[str, str]:
     """1.5B ReAct가 tool을 한 번도 안 부른 경우의 안전망 — graph/vector를 직접 호출해
     grounding을 보장한다(에어백 오답처럼 검색 없이 hallucination하는 것을 차단).
 
@@ -528,7 +530,7 @@ async def _summarize_with_1_5b(query: str, context_text: str) -> str:
     return (response.content or "").strip()
 
 
-async def knowledge_node(state: AgentState) -> Dict[str, Any]:
+async def knowledge_node(state: AgentState) -> dict[str, Any]:
     await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": "Knowledge agent retrieving context..."}))
     
     messages = state.get("messages", [])

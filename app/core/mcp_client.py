@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -18,7 +18,7 @@ from app.core.config import MCP_SERVER_URL, MCP_TOOL_TIMEOUT
 logger = logging.getLogger(__name__)
 
 
-async def call_mcp_tool_raw(tool_name: str, params: Dict[str, Any]) -> Tuple[str, str]:
+async def call_mcp_tool_raw(tool_name: str, params: dict[str, Any]) -> tuple[str, str]:
     """
     streamable-http transport 로 MCP 서버에 연결해 tool 을 호출한다.
 
@@ -44,8 +44,8 @@ async def call_mcp_tool_raw(tool_name: str, params: Dict[str, Any]) -> Tuple[str
 
 async def call_mcp_tool_once(
     tool_name: str,
-    params: Dict[str, Any],
-) -> Tuple[str, str, str, str]:
+    params: dict[str, Any],
+) -> tuple[str, str, str, str]:
     """
     단일 MCP tool 호출. retry 없음 — 재시도 결정은 호출자(observe 단계) 책임.
 
@@ -67,7 +67,7 @@ async def call_mcp_tool_once(
 
         return result_text, "success", "", ""
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
         logger.warning("MCP timeout: %s", tool_name)
         return error_msg, "error", "timeout", error_msg

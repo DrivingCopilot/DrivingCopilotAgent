@@ -1,11 +1,11 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+import app.a2a.dispatch as dispatch_module
 import app.graph.builder as builder_module
 from app.a2a.dispatch import dispatch_task
-import app.a2a.dispatch as dispatch_module
 from app.graph.builder import run_graph
-
 
 # ---------------------------------------------------------------------------
 # fixtures

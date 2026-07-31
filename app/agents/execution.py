@@ -23,16 +23,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
+from app.core.mcp_client import call_mcp_tool_once as _call_mcp_tool_once
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.core.mcp_client import call_mcp_tool_raw as _call_mcp_tool_raw
-from app.core.mcp_client import call_mcp_tool_once as _call_mcp_tool_once
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Backend mcp_server.py 에 정의된 12종 tool
-MCP_TOOLS: List[str] = [
+MCP_TOOLS: list[str] = [
     "control_climate",
     "set_navigation",
     "control_media",
@@ -251,7 +250,7 @@ _EXTRACTION_SYSTEM_PROMPT = _PROMPT_R5  # 기본값: Round 5 확정본
 
 # 모듈 레벨 싱글턴 — plan step마다 새 인스턴스를 만들지 않는다.
 # None 으로 시작하는 lazy init: import 시점에 API key 검증을 하지 않는다.
-_EXTRACTION_LLM: Optional[ChatOpenAI] = None
+_EXTRACTION_LLM: ChatOpenAI | None = None
 
 
 def _get_extraction_llm() -> ChatOpenAI:
@@ -271,7 +270,7 @@ def _get_extraction_llm() -> ChatOpenAI:
 # Plan → Tool Call 추출 (LLM 보조)
 # ---------------------------------------------------------------------------
 
-async def _extract_tool_call(plan_step: str) -> Optional[Dict[str, Any]]:
+async def _extract_tool_call(plan_step: str) -> dict[str, Any] | None:
     """
     supervisor 가 만든 plan 의 단일 스텝 문자열에서
     MCP tool 이름과 파라미터를 추출한다.
@@ -310,7 +309,7 @@ async def _extract_tool_call(plan_step: str) -> Optional[Dict[str, Any]]:
 # Execution Agent 메인 엔트리
 # ---------------------------------------------------------------------------
 
-async def run_execution(state: AgentState) -> Dict[str, Any]:
+async def run_execution(state: AgentState) -> dict[str, Any]:
     """
     Execution Agent 실 구현.
 
@@ -329,12 +328,12 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
     Returns:
         state 에 병합할 딕셔너리 (tool_calls, context_data)
     """
-    plan: List[str] = state.get("plan", [])
-    context_data: Dict[str, Any] = dict(state.get("context_data", {}))
-    vehicle_state: Dict[str, Any] = dict(context_data.get("vehicle_state", {}))
+    plan: list[str] = state.get("plan", [])
+    context_data: dict[str, Any] = dict(state.get("context_data", {}))
+    vehicle_state: dict[str, Any] = dict(context_data.get("vehicle_state", {}))
 
-    new_tool_calls: List[Dict[str, Any]] = []
-    new_vehicle_state: Dict[str, Any] = dict(vehicle_state)
+    new_tool_calls: list[dict[str, Any]] = []
+    new_vehicle_state: dict[str, Any] = dict(vehicle_state)
 
     logger.info("execution_node 시작: plan=%s", plan)
 
@@ -347,7 +346,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             continue
 
         tool_name: str = tool_info["tool_name"]
-        tool_params: Dict[str, Any] = tool_info.get("params", {})
+        tool_params: dict[str, Any] = tool_info.get("params", {})
 
         # ── 2. 잘못된 Tool — 1회 재추출 재시도 ─────────────────────────────
         if tool_name not in MCP_TOOLS:
@@ -397,7 +396,7 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
         )
 
         # ── 6. tool_calls 누적 ──────────────────────────────────────────────
-        tool_call: Dict[str, Any] = {
+        tool_call: dict[str, Any] = {
             "tool": tool_name,
             "params": tool_params,
             "result": result_text,

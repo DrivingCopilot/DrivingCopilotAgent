@@ -37,7 +37,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -63,7 +63,7 @@ SQL_TOOLS = {"text_to_sql_query"}
 # Gold Set 로드 (읽기 전용: git show 로 브랜치 blob 을 직접 읽음)
 # ---------------------------------------------------------------------------
 
-def load_gold_set(set_name: str, gold_ref: str) -> List[Dict[str, Any]]:
+def load_gold_set(set_name: str, gold_ref: str) -> list[dict[str, Any]]:
     path = GOLD_FILES[set_name]
     try:
         raw = subprocess.check_output(
@@ -75,7 +75,7 @@ def load_gold_set(set_name: str, gold_ref: str) -> List[Dict[str, Any]]:
         raise SystemExit(
             f"[gold-set 로드 실패] git show {gold_ref}:{path}\n{stderr}\n"
             f"→ 브랜치가 있는지 확인: git fetch origin {gold_ref.split('/')[-1]}"
-        )
+        ) from None
     return json.loads(raw)
 
 
@@ -83,7 +83,7 @@ def load_gold_set(set_name: str, gold_ref: str) -> List[Dict[str, Any]]:
 # 채점 유틸
 # ---------------------------------------------------------------------------
 
-def _char_bigrams(text: str) -> List[str]:
+def _char_bigrams(text: str) -> list[str]:
     # 공백/문장부호 제거 후 문자 bigram. 한국어 형태소 경계에 견고한 근사치.
     s = re.sub(r"[\s\W]+", "", text or "")
     return [s[i : i + 2] for i in range(len(s) - 1)] if len(s) >= 2 else list(s)
@@ -107,7 +107,7 @@ def char_bigram_f1(pred: str, gold: str) -> float:
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
-def number_recall(pred: str, gold: str) -> Optional[float]:
+def number_recall(pred: str, gold: str) -> float | None:
     # expected_answer 의 숫자 사실(연료 45.3, 공기압 33 등)이 답변에 나타난 비율.
     gold_nums = set(_NUM_RE.findall(gold or ""))
     if not gold_nums:
@@ -116,9 +116,9 @@ def number_recall(pred: str, gold: str) -> Optional[float]:
     return len(gold_nums & pred_nums) / len(gold_nums)
 
 
-def extract_called_tools(new_messages: List[Any]) -> List[str]:
+def extract_called_tools(new_messages: list[Any]) -> list[str]:
     """knowledge_node 가 반환한 new_messages 에서 ReAct 가 호출한 tool 이름을 모은다."""
-    names: List[str] = []
+    names: list[str] = []
     for m in new_messages:
         for tc in getattr(m, "tool_calls", None) or []:
             name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
@@ -143,7 +143,7 @@ def route_correct(route_type: str, tools_called: set) -> bool:
 # 한 항목 평가
 # ---------------------------------------------------------------------------
 
-async def eval_item(item: Dict[str, Any]) -> Dict[str, Any]:
+async def eval_item(item: dict[str, Any]) -> dict[str, Any]:
     state = {
         "messages": [HumanMessage(content=item["query"])],
         "plan": [],
@@ -153,7 +153,7 @@ async def eval_item(item: Dict[str, Any]) -> Dict[str, Any]:
     started = time.perf_counter()
     errored, error_msg = False, ""
     answer = ""
-    tools_called: List[str] = []
+    tools_called: list[str] = []
 
     try:
         result = await knowledge_node(state)
@@ -187,8 +187,8 @@ async def eval_item(item: Dict[str, Any]) -> Dict[str, Any]:
 # 집계 & 리포트
 # ---------------------------------------------------------------------------
 
-def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    def agg(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def agg(subset: list[dict[str, Any]]) -> dict[str, Any]:
         n = len(subset)
         if n == 0:
             return {"n": 0}
@@ -209,8 +209,8 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"overall": agg(rows), "by_route": by_route}
 
 
-def print_report(summary: Dict[str, Any]) -> None:
-    def line(label: str, s: Dict[str, Any]) -> str:
+def print_report(summary: dict[str, Any]) -> None:
+    def line(label: str, s: dict[str, Any]) -> str:
         if s.get("n", 0) == 0:
             return f"  {label:<8} (없음)"
         return (
@@ -233,8 +233,8 @@ def print_report(summary: Dict[str, Any]) -> None:
 # main
 # ---------------------------------------------------------------------------
 
-async def run(sets: List[str], gold_ref: str, limit: Optional[int], out_path: Path) -> None:
-    rows: List[Dict[str, Any]] = []
+async def run(sets: list[str], gold_ref: str, limit: int | None, out_path: Path) -> None:
+    rows: list[dict[str, Any]] = []
     for set_name in sets:
         items = load_gold_set(set_name, gold_ref)
         if limit:

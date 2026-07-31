@@ -12,13 +12,12 @@ app/model_server/server.py 단위 테스트 — 특히 "침묵" 버그의 근본
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.model_server.server import app, _strip_tool_messages_for_vl
-
+from app.model_server.server import _strip_tool_messages_for_vl, app
 
 # ---------------------------------------------------------------------------
 # _strip_tool_messages_for_vl

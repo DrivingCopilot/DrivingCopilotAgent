@@ -4,7 +4,7 @@
 # DrivingCopilotBackend (port 8000) 에서 단발성으로 supervisor 를 호출할 때 사용한다.
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -21,14 +21,14 @@ class InvokeRequest(BaseModel):
     route_type: str = Field("", description="rag/tool/sql/vision/chat 등 백엔드 라우터가 사전 분류한 결과")
 
 class InvokeResponse(BaseModel):
-    plan: List[Any]
+    plan: list[Any]
     next_agent: str
-    messages: List[str]
+    messages: list[str]
     feedback: str = ""
 
 
 @router.get("/health")
-async def health() -> Dict[str, str]:
+async def health() -> dict[str, str]:
     return {"status": "ok", "service": "supervisor-agent"}
 
 

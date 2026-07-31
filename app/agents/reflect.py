@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -37,7 +37,7 @@ Output strictly valid JSON with two keys:
 """
 
 
-async def reflect_node(state: AgentState) -> Dict[str, Any]:
+async def reflect_node(state: AgentState) -> dict[str, Any]:
     """
     매 사이클 진입하는 Reflect 노드.
     observe의 next_agent 값으로 2가지 분기 처리.
@@ -47,7 +47,7 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
     messages = state.get("messages", [])
     context_data = state.get("context_data", {})
     route_type: str = state.get("route_type", "")
-    error_count: Dict[str, int] = state.get("error_count", {})
+    error_count: dict[str, int] = state.get("error_count", {})
 
     # ------------------------------------------------------------------
     # 분기 1: failure 케이스 (한도 초과, observe가 next_agent="__end__"로 라우팅)

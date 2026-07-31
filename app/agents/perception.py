@@ -23,7 +23,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -47,14 +47,14 @@ _VISION_PROMPT = (
 # hazard → execution agent 가 수행할 plan step. execution._extract_tool_call 이
 # 이 문자열을 보고 MCP tool/파라미터를 추출하므로, execution.py의 _TOOL_SIGNATURES
 # 표기와 맞춰서 작성한다 (app/agents/execution.py 참고).
-HAZARD_PLAN_STEPS: Dict[str, str] = {
+HAZARD_PLAN_STEPS: dict[str, str] = {
     "rain": "비가 감지되었습니다. 와이퍼를 켜세요. (control_wiper on=true)",
     "tunnel": "터널 진입이 감지되었습니다. 전조등을 켜세요. (control_lighting on=true)",
     "warning_light": "경고등이 감지되었습니다. 대시보드 경고등 상태를 조회하세요. (query_dashboard metric=warning_lights)",
 }
 
 
-def _parse_vision_response(raw: str) -> Tuple[str, List[str]]:
+def _parse_vision_response(raw: str) -> tuple[str, list[str]]:
     """
     Vision LLM 응답에서 description/hazards 를 추출한다.
     구조화 JSON 파싱에 실패하면 원본 텍스트를 description으로, hazards는 빈
@@ -77,7 +77,7 @@ def _parse_vision_response(raw: str) -> Tuple[str, List[str]]:
 _CLEAR_WEATHER_KEYWORDS = ("맑", "화창", "clear", "비 안", "비가 안", "눈 안", "눈이 안")
 
 
-def _sanity_check_hazards(description: str, hazards: List[str]) -> List[str]:
+def _sanity_check_hazards(description: str, hazards: list[str]) -> list[str]:
     """description이 명시적으로 맑은 날씨를 서술하면 hazards의 'rain'을 제거한다."""
     if "rain" in hazards and any(kw in description for kw in _CLEAR_WEATHER_KEYWORDS):
         return [h for h in hazards if h != "rain"]
@@ -85,7 +85,7 @@ def _sanity_check_hazards(description: str, hazards: List[str]) -> List[str]:
 
 
 # 모듈 레벨 싱글턴 — execution.py 의 _EXTRACTION_LLM 과 동일한 lazy init 패턴.
-_VISION_LLM: Optional[ChatOpenAI] = None
+_VISION_LLM: ChatOpenAI | None = None
 
 
 def _get_vision_llm() -> ChatOpenAI:
@@ -98,9 +98,9 @@ def _get_vision_llm() -> ChatOpenAI:
     return _VISION_LLM
 
 
-async def perception_node(state: AgentState) -> Dict[str, Any]:
+async def perception_node(state: AgentState) -> dict[str, Any]:
     """Perception Agent 노드. 카메라 프레임을 조회해 Vision LLM 으로 분석한다."""
-    context_data: Dict[str, Any] = dict(state.get("context_data", {}))
+    context_data: dict[str, Any] = dict(state.get("context_data", {}))
 
     logger.info(
         "perception_node 시작: route_type=%s vlm_model=%s",

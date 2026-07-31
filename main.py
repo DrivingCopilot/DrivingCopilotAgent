@@ -18,11 +18,12 @@ load_dotenv()  # app.core.config 가 import 시점에 os.getenv 를 읽으므로
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.graph import ws as graph_ws
-from app.core import config
 from app.a2a.router import router as a2a_router
 from app.api.http import router as http_router
-from app.api.websocket import router as ws_router, streamer_proxy
+from app.api.websocket import router as ws_router
+from app.api.websocket import streamer_proxy
+from app.core import config
+from app.graph import ws as graph_ws
 
 logging.basicConfig(
     level=logging.INFO,

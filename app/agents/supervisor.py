@@ -9,18 +9,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Literal
+from typing import Any, Literal
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
-from app.core.config import AGENT_PORT, MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
+from app.core.config import (
+    AGENT_PORT,
+    EXPERIENCE_TOP_K,
+    MAX_RETRY,
+    MODEL_SERVER_URL,
+    QWEN_VL_MODEL_NAME,
+    WINDOW_SIZE,
+)
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
 from app.memory.experience import build_situation, get_experience_memory
 
 logger = logging.getLogger(__name__)
@@ -43,13 +49,13 @@ _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 # perception.py의 HAZARD_PLAN_STEPS와 동일한 controlled vocabulary에 대한
 # 사용자 안내용 한국어 라벨과, 사용자 질문에서 해당 항목을 묻고 있는지 판별할
 # 키워드. _compose_vision_summary 가 최종 답변 생성에 사용한다.
-HAZARD_LABELS: Dict[str, str] = {
+HAZARD_LABELS: dict[str, str] = {
     "rain": "비",
     "tunnel": "터널",
     "warning_light": "경고등",
 }
 
-HAZARD_KEYWORDS: Dict[str, List[str]] = {
+HAZARD_KEYWORDS: dict[str, list[str]] = {
     "rain": ["비", "rain", "우산"],
     "tunnel": ["터널", "tunnel"],
     "warning_light": ["경고등", "warning"],
@@ -59,7 +65,7 @@ HAZARD_KEYWORDS: Dict[str, List[str]] = {
 # 7B 모델이 reasoning에서는 "execution agent가 처리해야 한다"고 결론 내리고도
 # next_agent 필드는 "__end__"로 내보내는 instruction-following 불일치를
 # 코드 레벨에서 바로잡는 데 쓴다 (perception 재호출 차단과 반대 방향의 보정).
-_AGENT_NAME_HINTS: Dict[str, List[str]] = {
+_AGENT_NAME_HINTS: dict[str, list[str]] = {
     "execution": ["execution agent", "delegate to 'execution'", "delegate to execution"],
     "knowledge": ["knowledge agent", "delegate to 'knowledge'", "delegate to knowledge"],
     "perception": ["perception agent", "delegate to 'perception'", "delegate to perception"],
@@ -76,7 +82,7 @@ class SupervisorDecision(BaseModel):
     """
 
     reasoning: str = Field(..., description="Brief chain-of-thought explanation of the decision.")
-    plan: List[str] = Field(..., description="Step-by-step execution plan as strings.")
+    plan: list[str] = Field(..., description="Step-by-step execution plan as strings.")
     next_agent: Literal["knowledge", "execution", "perception", "__end__"] = Field(
         ..., description="Exactly one of the available sub-agent names, or '__end__' if the task is complete."
     )
@@ -92,7 +98,7 @@ def _infer_intended_agent(reasoning: str) -> str | None:
     return mentioned[0] if len(mentioned) == 1 else None
 
 
-def _plan_tool_name(plan: List[str]) -> str:
+def _plan_tool_name(plan: list[str]) -> str:
     """plan 첫 스텝에서 MCP tool 이름만 뽑는다.
 
     plan 스텝은 "get_vehicle_status" 또는 "control_climate temperature=22 on=true"
@@ -112,12 +118,12 @@ def _plan_tool_name(plan: List[str]) -> str:
 _INTERNAL_ROUTING_TOKENS = {"__end__", "end", "__start__", "start"}
 
 
-def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
+def _filter_internal_plan_steps(plan: list[str]) -> list[str]:
     """plan 배열에서 LangGraph 내부 라우팅 예약어만 제거한다(사용자 노출용)."""
     return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
 
 
-def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = "") -> str:
+def _compose_vision_summary(vision_results: dict[str, Any], user_query: str = "") -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
     LLM의 reasoning은 모델의 instruction-following 불안정으로 신뢰할 수 없으므로
@@ -148,7 +154,7 @@ def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = ""
     return f"비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다. (카메라 상황: {description})"
 
 
-def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
+def _compose_tool_result_summary(last_tool_call: dict[str, Any]) -> str:
     """
     execution 위임 완료 후 최종 답변을 last_tool_call로부터 결정적으로 구성한다.
     _compose_vision_summary와 동일한 원칙 — reasoning(CoT)은 instruction-following
@@ -251,7 +257,7 @@ Always include your error_recovery reasoning in the 'reasoning' field of your JS
 """
 
 
-async def supervisor_node(state: AgentState) -> Dict[str, Any]:
+async def supervisor_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph 기반 Supervisor Node (Qwen2-VL 7B 활용)
     1. WebSocket 실시간 스트리밍 연동

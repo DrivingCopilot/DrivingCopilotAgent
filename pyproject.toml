@@ -1,0 +1,28 @@
+[tool.ruff]
+# On-Device Multimodal Driving Copilot — Agent 레포 린터/포매터 설정.
+# 팀 공통 스타일을 코드로 고정한다(도입: refactor-test/e2e 정리 PR).
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "notebooks"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle+pyflakes 필수, I: import 정렬, UP: 타입힌트/구문 모던화,
+# B: 흔한 버그 패턴(flake8-bugbear), SIM: 단순화.
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # 줄 길이 — 대량 리플로우 회피(가독성 위해 수동 관리)
+    "B008",   # 기본 인자에서 함수 호출 — FastAPI Depends() 패턴 허용
+    "SIM117", # 중첩 with — 일부는 분리가 더 명확
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 테스트는 픽스처/모킹 특성상 일부 규칙을 완화한다.
+"tests/*" = ["E402", "F811"]
+# 엔트리포인트/스크립트는 load_dotenv()·sys.path 설정을 import보다 먼저 실행해야 하므로
+# E402(import not at top)는 의도적이다.
+"main.py" = ["E402"]
+"app/a2a/server.py" = ["E402"]
+"evaluation/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "evaluation"]

@@ -1,17 +1,19 @@
-import pytest
-from unittest.mock import patch, MagicMock
 import sqlite3
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.services.text2sql import (
-    schema_Linking,
-    few_shot_sql,
-    self_consistency,
-    validate_syntax,
-    validate_plan,
-    execute_validated,
-    validate_sql_and_execute,
     _clean_sql,
+    execute_validated,
+    few_shot_sql,
+    schema_Linking,
+    self_consistency,
+    validate_plan,
+    validate_sql_and_execute,
+    validate_syntax,
 )
+
 
 @pytest.fixture
 def dummy_schemas():

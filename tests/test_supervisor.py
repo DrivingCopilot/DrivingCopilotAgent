@@ -17,10 +17,9 @@ Supervisor Agent 단위 테스트.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 
@@ -28,7 +27,7 @@ def _make_state(
     context_data: dict | None = None,
     next_agent: str = "",
     user_query: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "messages": [HumanMessage(content=user_query)] if user_query else [],
         "route_type": "vision",

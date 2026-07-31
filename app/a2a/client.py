@@ -8,7 +8,6 @@
 # 추후 Agent별 독립 서버로 분리 시 각 URL만 추가하면 된다.
 
 import logging
-from typing import Optional
 
 import httpx
 
@@ -22,7 +21,7 @@ class A2AClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    async def fetch_card(self, agent_name: str) -> Optional[AgentCard]:
+    async def fetch_card(self, agent_name: str) -> AgentCard | None:
         """특정 Agent의 Card를 HTTP로 가져온다."""
         url = f"{self._base_url}/a2a/agents/{agent_name}"
         try:

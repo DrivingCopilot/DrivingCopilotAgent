@@ -12,21 +12,20 @@ CRAG 노드 및 조건부 엣지(app/agents/crag.py) 단위 테스트.
     .venv/bin/python -m pytest tests/test_crag.py -v
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.crag import (
+    _DEFAULT_GRADE,
+    MAX_CRAG_ATTEMPTS,
+    _effective_query,
     grade_retrieval_node,
-    transform_query_node,
     refine_knowledge_node,
     route_after_grade,
-    _effective_query,
-    MAX_CRAG_ATTEMPTS,
-    _DEFAULT_GRADE,
+    transform_query_node,
 )
-
 
 # ---------------------------------------------------------------------------
 # 헬퍼: ChatOpenAI(...) 를 대체하는 가짜 LLM

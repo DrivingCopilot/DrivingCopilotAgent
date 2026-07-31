@@ -9,7 +9,6 @@ A2ATaskRequest/Response 경계 변환만 담당하므로, 이 파일에서는 �
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage

@@ -11,7 +11,7 @@
 import json
 import logging
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 from app.a2a.client import A2AClient
 from app.a2a.models import A2ATaskRequest
@@ -24,7 +24,7 @@ from app.graph.state import AgentState
 logger = logging.getLogger(__name__)
 
 
-async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any]:
+async def _run_remote_agent(agent_name: str, state: AgentState) -> dict[str, Any]:
     card = get_card(agent_name)
     context = {
         "messages": serialize_messages(state.get("messages", [])),
@@ -113,13 +113,13 @@ async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any
     return result
 
 
-async def knowledge_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def knowledge_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("knowledge", state)
 
 
-async def execution_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def execution_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("execution", state)
 
 
-async def perception_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def perception_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("perception", state)

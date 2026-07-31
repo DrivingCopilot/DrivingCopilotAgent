@@ -18,26 +18,25 @@ Knowledge Agent 노드(app/agents/knowledge.py) 단위 테스트.
     .venv/bin/python -m pytest tests/test_knowledge.py -v
 """
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agents.knowledge import (
-    knowledge_node,
-    vector_rag_search,
-    graph_rag_search,
-    text_to_sql_query,
-    _extract_query_terms,
-    _is_unusable_result,
-    _is_probably_korean,
-    _ensure_korean,
     _dedup_lines,
+    _ensure_korean,
+    _extract_query_terms,
     _extract_tool_context,
     _grounding_overlap,
+    _is_probably_korean,
+    _is_unusable_result,
     _verify_answer_grounded,
+    graph_rag_search,
+    knowledge_node,
+    text_to_sql_query,
+    vector_rag_search,
 )
-
 
 # ---------------------------------------------------------------------------
 # 테스트용 가짜 ReAct 에이전트

@@ -67,8 +67,9 @@ import json
 import os
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -76,18 +77,17 @@ from dotenv import load_dotenv
 load_dotenv()  # app.core.config 가 import 시점에 os.getenv 를 읽으므로 가장 먼저 실행
 
 from app.agents.execution import MCP_TOOLS, run_execution
-
 from evaluation._gold import load_gold_set
 
 # mcp_server.py 실제 시그니처의 기본값. control_climate 만 on=True 기본값을 가짐.
-TOOL_DEFAULTS: Dict[str, Dict[str, Any]] = {"control_climate": {"on": True}}
+TOOL_DEFAULTS: dict[str, dict[str, Any]] = {"control_climate": {"on": True}}
 
 # Backend REST(계획서 §9) 의 차량 상태 조회 엔드포인트. MCP_SERVER_URL(app/core/config.py, 9000)
 # 과는 별개 포트(8000, FastAPI REST)라 여기서 별도 env var 로 관리한다.
 VEHICLE_STATE_URL: str = os.getenv("VEHICLE_STATE_URL", "http://localhost:8000/vehicle/state")
 
 
-async def fetch_vehicle_state(timeout: float = 5.0) -> Dict[str, Any]:
+async def fetch_vehicle_state(timeout: float = 5.0) -> dict[str, Any]:
     """Backend REST(GET /vehicle/state, 계획서 §9)에서 현재 VehicleState 를 조회한다."""
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(VEHICLE_STATE_URL)
@@ -103,7 +103,7 @@ async def fetch_vehicle_state(timeout: float = 5.0) -> Dict[str, Any]:
 # 이 4종만 vehicle_state.json 을 실제로 변경한다(mcp_server.py 의
 # update_vehicle_state 호출부 참고: control_climate/control_window/
 # set_driving_mode/control_wiper).
-TOOL_STATE_FIELD: Dict[str, Callable[[Dict[str, Any]], List[Tuple[str, Any]]]] = {
+TOOL_STATE_FIELD: dict[str, Callable[[dict[str, Any]], list[tuple[str, Any]]]] = {
     "control_climate": lambda p: [
         ("ac_on", p.get("on", True)),
         *([("ac_temperature", float(p["temperature"]))] if p.get("temperature") is not None else []),
@@ -136,8 +136,8 @@ STALE_GOLD_IDS = {"tool_021", "tool_022", "tool_023", "tool_024", "tool_025", "t
 # ---------------------------------------------------------------------------
 
 def extract_tool_invocations(
-    result: Dict[str, Any],
-) -> List[Tuple[str, Dict[str, Any], str, str, str]]:
+    result: dict[str, Any],
+) -> list[tuple[str, dict[str, Any], str, str, str]]:
     """run_execution 반환값의 tool_calls 리스트에서 (name, params, status, error_type, result) 추출."""
     calls = result.get("tool_calls") or []
     return [
@@ -158,12 +158,12 @@ def extract_tool_invocations(
 
 def score_tool_item(
     expected_name: str,
-    expected_params: Dict[str, Any],
-    calls: List[Tuple[str, Dict[str, Any], str, str, str]],
+    expected_params: dict[str, Any],
+    calls: list[tuple[str, dict[str, Any], str, str, str]],
     expected_answer: str = "",
-    state_before: Optional[Dict[str, Any]] = None,
-    state_after: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    state_before: dict[str, Any] | None = None,
+    state_after: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """단일 gold 항목을 채점한다.
 
     calls 는 extract_tool_invocations() 의 반환값(호출 순서대로)이며, 첫 번째 호출만 본다
@@ -233,7 +233,7 @@ def score_tool_item(
     params_effective = all(effective.get(k) == v for k, v in expected_params.items())
     result_exact = result_text.strip() == expected_answer.strip() if params_effective else None
 
-    state_correct: Optional[bool] = None
+    state_correct: bool | None = None
     if params_effective and name in TOOL_STATE_FIELD and state_after is not None:
         expected_fields = TOOL_STATE_FIELD[name](params)
         state_correct = all(state_after.get(field) == value for field, value in expected_fields)
@@ -253,7 +253,7 @@ def score_tool_item(
 # 한 항목 평가
 # ---------------------------------------------------------------------------
 
-async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]:
+async def eval_item(item: dict[str, Any], item_timeout: float) -> dict[str, Any]:
     """gold 항목 하나를 run_execution(state) 로 E2E 실행하고 채점한다.
 
     run_execution 은 state["plan"](plan step 문자열 리스트)과 state["context_data"] 만
@@ -263,12 +263,12 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
     (call_mcp_tool_once 내부, MCP_TOOL_TIMEOUT)과는 별개 개념이다 — 그래서 여기서 발생하는
     failure 는 "eval_timeout"/"eval_exception"으로 §5 4종과 분리해서 표시한다.
     """
-    state: Dict[str, Any] = {"plan": [item["query"]], "context_data": {}}
+    state: dict[str, Any] = {"plan": [item["query"]], "context_data": {}}
 
     started = time.perf_counter()
     errored, error_msg = False, ""
-    calls: List[Tuple[str, Dict[str, Any], str, str, str]] = []
-    score: Dict[str, Any] = {}
+    calls: list[tuple[str, dict[str, Any], str, str, str]] = []
+    score: dict[str, Any] = {}
 
     # 상태검증(state_correct)용 스냅샷. Backend 재기동 중 등으로 조회가 실패해도
     # eval_item() 자체는 죽지 않도록 각각 개별 try/except 로 감싸고 실패 시 None 유지.
@@ -280,7 +280,7 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
     try:
         result = await asyncio.wait_for(run_execution(state), timeout=item_timeout)
         calls = extract_tool_invocations(result)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         errored, error_msg = True, f">{item_timeout}s"
         score = {
             "tool_correct": False,
@@ -348,8 +348,8 @@ async def eval_item(item: Dict[str, Any], item_timeout: float) -> Dict[str, Any]
 # 집계 & 리포트
 # ---------------------------------------------------------------------------
 
-def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    def agg(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def agg(subset: list[dict[str, Any]]) -> dict[str, Any]:
         n = len(subset)
         if n == 0:
             return {"n": 0}
@@ -379,7 +379,7 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     by_tool = {tool: agg([r for r in normal_rows if r["expected_tool_name"] == tool]) for tool in MCP_TOOLS}
 
-    error_type_dist: Dict[str, int] = {k: 0 for k in _ERROR_TYPES}
+    error_type_dist: dict[str, int] = {k: 0 for k in _ERROR_TYPES}
     for r in rows:
         et = r.get("error_type")
         if et in error_type_dist:
@@ -396,8 +396,8 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def print_report(summary: Dict[str, Any]) -> None:
-    def line(label: str, s: Dict[str, Any]) -> str:
+def print_report(summary: dict[str, Any]) -> None:
+    def line(label: str, s: dict[str, Any]) -> str:
         if s.get("n", 0) == 0:
             return f"  {label:<20} (없음)"
         # result_exact_rate 는 해당 버킷에 완전정답(tool_correct and params_effective)이
@@ -434,14 +434,14 @@ def print_report(summary: Dict[str, Any]) -> None:
 # main
 # ---------------------------------------------------------------------------
 
-async def run(limit: Optional[int], item_timeout: float, gold_ref: str, out_path: Path) -> None:
+async def run(limit: int | None, item_timeout: float, gold_ref: str, out_path: Path) -> None:
     items, provenance = load_gold_set("tool", gold_ref)
     if limit:
         items = items[:limit]
 
     print(f"[tool] {len(items)}건 평가 중 (item-timeout={item_timeout}s, source={provenance['source']})...")
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for i, item in enumerate(items, 1):
         row = await eval_item(item, item_timeout)
         flag = "ERR " if row["errored"] else "OK  " if row["tool_correct"] and row["params_effective"] else "MISS"

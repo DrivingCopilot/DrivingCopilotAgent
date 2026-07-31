@@ -42,7 +42,7 @@ class Streamer:
     def send_status_sync(self, message: str) -> None:
         logger.info(f"WS_SEND_SYNC: {message}")
 
-    async def send_done(self, reason: Optional[str] = None) -> None:
+    async def send_done(self, reason: str | None = None) -> None:
         if self._done_sent:
             return
         self._done_sent = True

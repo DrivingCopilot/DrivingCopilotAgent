@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
@@ -65,7 +65,7 @@ async def health():
 _TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
 
-def _strip_tool_messages_for_vl(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _strip_tool_messages_for_vl(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """VL(Qwen2-VL) 채팅 템플릿은 tool-calling용으로 설계되지 않았다 — 텍스트 모델 경로의
     _normalize_message_for_text와 달리 tool_calls/tool 메시지 구조를 지원한다는 보장이
     없다. supervisor는 항상 이 VL 경로를 쓰면서 전체 대화 히스토리를 그대로 보내므로,
@@ -121,7 +121,7 @@ def _normalize_content_for_text(content: Any) -> str:
     return str(content)
 
 
-def _normalize_tool_call_arguments(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_tool_call_arguments(tool_call: dict[str, Any]) -> dict[str, Any]:
     """OpenAI 왕복 규약은 function.arguments를 JSON 문자열로 담는다(_parse_tool_calls
     참고). Qwen 채팅 템플릿은 `tool_call.arguments | tojson`으로 객체를 렌더링하므로,
     문자열을 그대로 넘기면 따옴표로 한 번 더 감싸져(이중 인코딩) 모델이 자신이
@@ -136,7 +136,7 @@ def _normalize_tool_call_arguments(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     return {**tool_call, "function": function}
 
 
-def _normalize_message_for_text(message: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_message_for_text(message: dict[str, Any]) -> dict[str, Any]:
     """OpenAI 포맷 메시지를 텍스트 모델의 Qwen 채팅 템플릿이 기대하는 형태로
     정규화한다. role/content만 남기고 재조립하면 assistant의 tool_calls와
     tool 메시지가 사라져, ReAct 에이전트(knowledge_node)가 자신이 이미 tool을
@@ -159,7 +159,7 @@ def _normalize_message_for_text(message: Dict[str, Any]) -> Dict[str, Any]:
     return {"role": role, "content": _normalize_content_for_text(message.get("content"))}
 
 
-def _has_image(messages: List[Dict[str, Any]]) -> bool:
+def _has_image(messages: list[dict[str, Any]]) -> bool:
     return any(
         isinstance(m.get("content"), list)
         and any(b.get("type") == "image_url" for b in m["content"])
@@ -167,7 +167,7 @@ def _has_image(messages: List[Dict[str, Any]]) -> bool:
     )
 
 
-def _response_format_instruction(response_format: Optional[Dict[str, Any]]) -> Optional[str]:
+def _response_format_instruction(response_format: dict[str, Any] | None) -> str | None:
     if not response_format:
         return None
     fmt_type = response_format.get("type")
@@ -183,15 +183,15 @@ def _response_format_instruction(response_format: Optional[Dict[str, Any]]) -> O
 
 
 def _apply_response_format(
-    messages: List[Dict[str, Any]], response_format: Optional[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
+    messages: list[dict[str, Any]], response_format: dict[str, Any] | None
+) -> list[dict[str, Any]]:
     instruction = _response_format_instruction(response_format)
     if not instruction:
         return messages
     return [*messages, {"role": "system", "content": instruction}]
 
 
-def _parse_tool_calls(raw_text: str) -> Optional[List[Dict[str, Any]]]:
+def _parse_tool_calls(raw_text: str) -> list[dict[str, Any]] | None:
     """Qwen 표준 <tool_call>{...}</tool_call> 블록을 OpenAI tool_calls 형식으로 변환한다."""
     matches = _TOOL_CALL_RE.findall(raw_text)
     if not matches:
@@ -219,9 +219,9 @@ def _strip_tool_call_blocks(raw_text: str) -> str:
 
 
 def _completion_payload(
-    model: str, content: Optional[str], tool_calls: Optional[List[Dict[str, Any]]]
-) -> Dict[str, Any]:
-    message: Dict[str, Any] = {"role": "assistant", "content": content}
+    model: str, content: str | None, tool_calls: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    message: dict[str, Any] = {"role": "assistant", "content": content}
     finish_reason = "stop"
     if tool_calls:
         message["tool_calls"] = tool_calls
@@ -237,7 +237,7 @@ def _completion_payload(
     }
 
 
-def _stream_chunk(model: str, delta: Dict[str, Any], finish_reason: Optional[str] = None) -> str:
+def _stream_chunk(model: str, delta: dict[str, Any], finish_reason: str | None = None) -> str:
     payload = {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion.chunk",
@@ -252,7 +252,7 @@ def _stream_chunk(model: str, delta: Dict[str, Any], finish_reason: Optional[str
 async def chat_completions(request: Request):
     body = await request.json()
     model_name: str = body.get("model", "")
-    messages: List[Dict[str, Any]] = body.get("messages", [])
+    messages: list[dict[str, Any]] = body.get("messages", [])
     temperature: float = float(body.get("temperature") or 0.0)
     max_tokens: int = int(body.get("max_tokens") or 512)
     stream: bool = bool(body.get("stream", False))

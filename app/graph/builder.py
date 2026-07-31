@@ -32,25 +32,22 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
-from app.agents.supervisor import supervisor_node
-from app.agents.observe import observe_node
-from app.agents.reflect import reflect_node
-from app.agents.finalize import finalize_node
-from app.agents.perception import perception_node
-from app.agents.knowledge import knowledge_node
-from app.agents.execution import run_execution
 from app.agents.crag import (
     grade_retrieval_node,
-    transform_query_node,
     refine_knowledge_node,
     route_after_grade,
+    transform_query_node,
 )
+from app.agents.finalize import finalize_node
+from app.agents.observe import observe_node
+from app.agents.reflect import reflect_node
+from app.agents.supervisor import supervisor_node
+from app.graph import ws as _ws
 from app.graph.a2a_nodes import (
     execution_a2a_node,
     knowledge_a2a_node,
     perception_a2a_node,
 )
-from app.graph import ws as _ws
 from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)

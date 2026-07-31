@@ -21,10 +21,10 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 # gold-set 파일명 ↔ route 대응.
-GOLD_FILES: Dict[str, str] = {
+GOLD_FILES: dict[str, str] = {
     "rag": "evaluation/gold_set/RAG_gold_set.json",
     "sql": "evaluation/gold_set/SQL_gold_set.json",
     "multi": "evaluation/gold_set/multi_gold_set.json",
@@ -35,7 +35,7 @@ GOLD_FILES: Dict[str, str] = {
 def load_gold_set(
     set_name: str,
     gold_ref: str = "origin/feature/gold-set",
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """지정된 gold set 을 로드한다.
 
     워킹트리에 GOLD_FILES[set_name] 경로의 파일이 있으면 그것을 우선 읽고,
@@ -72,11 +72,11 @@ def load_gold_set(
             raise SystemExit(
                 f"[gold-set 로드 실패] 워킹트리에도 없고 git show {gold_ref}:{path} 도 실패\n{stderr}\n"
                 f"→ 브랜치가 있는지 확인: git fetch origin {gold_ref.split('/')[-1]}"
-            )
+            ) from None
         source = f"git:{gold_ref}:{path}"
 
-    items: List[Dict[str, Any]] = json.loads(raw)
-    provenance: Dict[str, Any] = {
+    items: list[dict[str, Any]] = json.loads(raw)
+    provenance: dict[str, Any] = {
         "set": set_name,
         "source": source,
         "sha256": hashlib.sha256(raw).hexdigest(),

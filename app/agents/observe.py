@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Dict
+from typing import Any
 
-from app.graph.state import AgentState
 from app.core.config import MAX_RETRY
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,9 @@ def _classify_last_tool(tool_calls: list[dict]) -> tuple[str, str | None]:
     return ("unknown", None)
 
 
-async def observe_node(state: AgentState) -> Dict[str, Any]:
+async def observe_node(state: AgentState) -> dict[str, Any]:
     tool_calls: list[dict] = state.get("tool_calls", [])
-    error_count: Dict[str, int] = copy.copy(state.get("error_count", {}))
+    error_count: dict[str, int] = copy.copy(state.get("error_count", {}))
 
     classification, error_type = _classify_last_tool(tool_calls)
     logger.debug("observe: classification=%s error_type=%s", classification, error_type)

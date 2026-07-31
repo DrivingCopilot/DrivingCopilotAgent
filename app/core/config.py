@@ -1,6 +1,5 @@
 
 import os
-from typing import Dict
 
 # app/core/config.py
 #
@@ -76,7 +75,7 @@ QWEN_TEXT_MODEL_NAME: str = os.getenv("QWEN_TEXT_MODEL_NAME", "Qwen/Qwen2.5-1.5B
 # ---------------------------------------------------------------------------
 # Observe 노드 재시도 정책 (계획서: 타임아웃 2회, 파라미터 오류 2회, 잘못된 Tool 1회, SQL 오류 3회)
 # ---------------------------------------------------------------------------
-MAX_RETRY: Dict[str, int] = {
+MAX_RETRY: dict[str, int] = {
     "timeout": 2,
     "parameter": 2,
     "invalid_tool": 1,

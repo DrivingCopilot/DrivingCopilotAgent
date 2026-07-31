@@ -26,23 +26,22 @@ tests/test_ws_silent_end.py
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-import app.graph.builder as builder_module
 import app.a2a.dispatch as dispatch_module
+import app.graph.builder as builder_module
 from app.a2a.dispatch import dispatch_task
 from app.graph.builder import run_graph
-
 
 # ---------------------------------------------------------------------------
 # 공용 헬퍼
 # ---------------------------------------------------------------------------
 
-def assert_text_before_done(frames: List[Dict[str, Any]]) -> None:
+def assert_text_before_done(frames: list[dict[str, Any]]) -> None:
     """'done'이 나갔다면 그 전에 비어있지 않은 'text'가 최소 1번은 나갔어야 한다."""
     done_frames = [f for f in frames if f.get("type") == "done"]
     assert done_frames, f"expected the turn to end with a 'done' frame, got frames={frames}"
@@ -58,7 +57,7 @@ def assert_text_before_done(frames: List[Dict[str, Any]]) -> None:
 @pytest.fixture
 def ws_capture(monkeypatch):
     """app.graph.ws.websocket_manager.send_status로 나가는 모든 프레임을 기록한다."""
-    frames: List[Dict[str, Any]] = []
+    frames: list[dict[str, Any]] = []
 
     async def _capture(message: str) -> None:
         frames.append(json.loads(message))
@@ -79,7 +78,7 @@ def _mock_structured_llm(*, ainvoke_result=None, ainvoke_side_effect=None):
     return MagicMock(return_value=mock_instance)
 
 
-def _base_state(user_query: str) -> Dict[str, Any]:
+def _base_state(user_query: str) -> dict[str, Any]:
     return {
         "messages": [HumanMessage(content=user_query)],
         "route_type": "",
@@ -154,7 +153,7 @@ async def test_supervisor_llm_exception_at_retry_limit_sends_text_before_done(ws
 
 @pytest.mark.asyncio
 async def test_supervisor_end_with_empty_everything_sends_nonblank_text(ws_capture):
-    from app.agents.supervisor import supervisor_node, SupervisorDecision
+    from app.agents.supervisor import SupervisorDecision, supervisor_node
 
     parsed = SupervisorDecision(reasoning="", plan=[], next_agent="__end__")
     mock_cls = _mock_structured_llm(
@@ -184,8 +183,10 @@ async def test_supervisor_end_with_empty_everything_sends_nonblank_text(ws_captu
 def test_websocket_handler_sends_text_when_run_graph_raises(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    from app.api.websocket import router as ws_router
+    from app.api.websocket import streamer_proxy
     from app.graph import ws as graph_ws
-    from app.api.websocket import router as ws_router, streamer_proxy
 
     # main.py의 lifespan과 동일하게 배선한다 — 그래야 supervisor_node 등이 쓰는
     # graph_ws.websocket_manager가 실제 WS 세션(streamer_proxy)으로 향한다.
@@ -202,7 +203,7 @@ def test_websocket_handler_sends_text_when_run_graph_raises(monkeypatch):
         client = TestClient(app)
         with client.websocket_connect("/ws") as ws:
             ws.send_text(json.dumps({"query": "에어컨 바람이 안 나와"}))
-            frames: List[Dict[str, Any]] = []
+            frames: list[dict[str, Any]] = []
             for _ in range(10):
                 frame = json.loads(ws.receive_text())
                 frames.append(frame)

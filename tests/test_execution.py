@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # 공통 픽스처
@@ -34,7 +33,7 @@ def _make_state(
     tool_calls: list | None = None,
     context_data: dict | None = None,
     error_count: dict | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """테스트용 최소 AgentState 생성."""
     return {
         "messages": [],

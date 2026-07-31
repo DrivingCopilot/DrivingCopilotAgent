@@ -10,20 +10,19 @@ A6000 서버 통합 시 qdrant_path → qdrant_url로 전환.
 
 from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트가 동작하도록 함
 
+import logging  # 진행 상황 로깅용
+
+from langchain_core.documents import Document  # LangChain 기본 문서 단위
+from langchain_huggingface import HuggingFaceEmbeddings  # LangChain 기반 HuggingFace 임베딩 래퍼
+from langchain_qdrant import QdrantVectorStore  # LangChain Qdrant 벡터스토어 래퍼
+from qdrant_client.http import models as qmodels  # Qdrant 설정 모델 (VectorParams, Distance 등)
+
 from app.core.config import (  # 전역 설정 상수 import
+    COLLECTION_NAME,
     MODEL_NAME,
     VECTOR_SIZE,
-    COLLECTION_NAME,
 )
 from app.services.qdrant_client import get_qdrant_client
-
-import logging  # 진행 상황 로깅용
-from pathlib import Path  # 파일 경로를 객체로 다루기 위한 모듈
-
-from langchain_core.documents import Document        # LangChain 기본 문서 단위
-from langchain_huggingface import HuggingFaceEmbeddings  # LangChain 기반 HuggingFace 임베딩 래퍼
-from langchain_qdrant import QdrantVectorStore       # LangChain Qdrant 벡터스토어 래퍼
-from qdrant_client.http import models as qmodels     # Qdrant 설정 모델 (VectorParams, Distance 등)
 
 logger = logging.getLogger(__name__)  # 현재 모듈 이름으로 로거 생성
 
@@ -162,8 +161,8 @@ class VehicleEmbedder:
 
 # 기능 시험용 코드
 if __name__ == "__main__":
-    import time
     import sys
+    import time
 
     query = sys.argv[1] if len(sys.argv) > 1 else "경고등"
 
