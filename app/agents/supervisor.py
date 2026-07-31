@@ -12,13 +12,13 @@ import logging
 from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
 from app.agents.execution import MCP_TOOLS as _MCP_TOOL_NAMES
-from app.core.config import AGENT_PORT, OLLAMA_BASE_URL
+from app.core.config import AGENT_PORT, MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
@@ -260,16 +260,19 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         route_type, current_next_agent, plan, error_count,
     )
 
-    # Ollama 네이티브 grammar-constrained decoding으로 JSON 스키마를 강제한다 —
-    # next_agent는 반드시 유효한 4개 값 중 하나, plan은 반드시 문자열 배열로만
-    # 나오게 되어(SupervisorDecision), 깨진 JSON이나 스키마 이탈 자체가 구조적으로
-    # 불가능해진다. 단, "그 값이 사용자 의도와 의미적으로 맞는가"는 스키마가
-    # 보장 못 하므로 아래 _infer_intended_agent 등 기존 안전장치는 그대로 둔다.
-    structured_llm = ChatOllama(
-        model="qwen2.5vl:7b",
+    # 로컬 모델 서버(app/model_server)에 JSON 스키마를 요청 시점에 함께 보낸다 —
+    # Ollama의 grammar-constrained decoding과 달리 이 서버는 prompt 주입 기반
+    # best-effort 준수만 보장한다(app/model_server/server.py 상단 주석 참고).
+    # 스키마 이탈은 parsing_error 로 아래에서 재시도 처리된다.
+    structured_llm = ChatOpenAI(
+        model=QWEN_VL_MODEL_NAME,
         temperature=0.0,
-        num_predict=300,
-        base_url=OLLAMA_BASE_URL,
+        # max_tokens는 상한일 뿐(정상 응답은 EOS로 일찍 종료되므로 이 값을 올려도
+        # 짧은 응답의 지연은 늘지 않는다). 300은 너무 낮아 reasoning(자유 CoT)이
+        # 길어지면 JSON이 문자열 중간에서 잘려(EOF while parsing) 파싱이 예외로
+        # 터졌다 — 7B가 'brief' 지시를 자주 어기므로 넉넉히 잡아 truncation을 막는다.
+        max_tokens=1024,
+        base_url=MODEL_SERVER_URL,
     ).with_structured_output(SupervisorDecision, method="json_schema", include_raw=True)
 
     # 첫 진입 시에만 experience 검색 (캐시 분기: run_graph 한 번에 재사용)
