@@ -1,0 +1,132 @@
+[
+  {
+    "id": "direct_temperature",
+    "category": "direct_preference",
+    "utterance": "에어컨 온도는 22도로 맞춰줘",
+    "expected": {"temperature": 22}
+  },
+  {
+    "id": "direct_music_genre",
+    "category": "direct_preference",
+    "utterance": "나는 재즈 좋아해",
+    "expected": {"music_genre": "jazz"},
+    "note": "오늘 배선검증 실측에서 실제로 {'music_genre': 'reduced'}로 잘못 추출된 케이스 (값 오류)"
+  },
+  {
+    "id": "direct_navigation_voice",
+    "category": "direct_preference",
+    "utterance": "내비게이션 음성은 여자 목소리로 해줘",
+    "expected": {"navigation_voice": "female"}
+  },
+  {
+    "id": "direct_seat_position",
+    "category": "direct_preference",
+    "utterance": "시트는 항상 3번 포지션으로 해줘",
+    "expected": {"seat_position": 3}
+  },
+  {
+    "id": "direct_driving_mode",
+    "category": "direct_preference",
+    "utterance": "주행 모드는 에코로 설정해줘",
+    "expected": {"driving_mode": "eco"}
+  },
+  {
+    "id": "direct_multi_category",
+    "category": "direct_preference",
+    "utterance": "온도는 24도로, 음악은 재즈로 해줘",
+    "expected": {"temperature": 24, "music_genre": "jazz"}
+  },
+  {
+    "id": "negation_music",
+    "category": "negation",
+    "utterance": "더 이상 재즈 안 들어",
+    "expected": {"music_genre": null}
+  },
+  {
+    "id": "negation_navigation",
+    "category": "negation",
+    "utterance": "네비 음성 안내 그만해",
+    "expected": {"navigation_voice": null}
+  },
+  {
+    "id": "negation_seat",
+    "category": "negation",
+    "utterance": "시트 포지션 설정 취소해",
+    "expected": {"seat_position": null}
+  },
+  {
+    "id": "negation_and_update_same_category",
+    "category": "negation_and_update",
+    "utterance": "재즈 별로, 클래식이 더 좋아",
+    "expected": {"music_genre": "classical"},
+    "note": "같은 카테고리 재진술 - null이 아니라 새 값으로 덮어써야 함 (update()가 last-write-wins 처리)"
+  },
+  {
+    "id": "negation_and_update_cross_category",
+    "category": "negation_and_update",
+    "utterance": "네비 안내는 그만하고 온도는 20도로 해줘",
+    "expected": {"navigation_voice": null, "temperature": 20},
+    "note": "한 카테고리는 negation, 다른 카테고리는 동시 갱신"
+  },
+  {
+    "id": "temporal_basic_today",
+    "category": "temporality_basic",
+    "utterance": "오늘만 좀 따뜻하게, 25도로 해줘",
+    "expected": {}
+  },
+  {
+    "id": "temporal_basic_now",
+    "category": "temporality_basic",
+    "utterance": "지금은 시트를 뒤로 밀어줘",
+    "expected": {}
+  },
+  {
+    "id": "temporal_activation_oneulddara",
+    "category": "temporality_activation_form",
+    "utterance": "오늘따라 덥네, 온도 20도로 해줘",
+    "expected": {},
+    "note": "활용형(오늘따라) - 오늘 오탐 발견 케이스"
+  },
+  {
+    "id": "temporal_activation_yojeumeun",
+    "category": "temporality_activation_form",
+    "utterance": "요즘은 재즈보다 클래식이 좋아",
+    "expected": {},
+    "note": "활용형(요즘은) - 프롬프트 개선으로 신규 추가되는 예외 표현"
+  },
+  {
+    "id": "temporal_activation_ijeneun",
+    "category": "temporality_activation_form",
+    "utterance": "이제는 재즈 대신 클래식 틀어줘",
+    "expected": {},
+    "note": "활용형(이제는) - 프롬프트 개선으로 신규 추가되는 예외 표현"
+  },
+  {
+    "id": "out_of_category_vehicle_control",
+    "category": "out_of_category",
+    "utterance": "와이퍼 켜줘",
+    "expected": {},
+    "note": "오늘 배선검증 실측에서 실제로 {'windshield_wiper': True}로 잘못 추출된 케이스 (허용 카테고리 밖 임의 키 생성)"
+  },
+  {
+    "id": "irrelevant_repeat_command",
+    "category": "irrelevant_command",
+    "utterance": "와이퍼 좀 켜줄래",
+    "expected": {},
+    "note": "오늘 배선검증 실측에서 실제로 5개 카테고리 전부 null로 잘못 추출된 케이스 (전체 negation 오탐)"
+  },
+  {
+    "id": "boundary_habitual_expression",
+    "category": "boundary",
+    "utterance": "나는 보통 클래식 들어",
+    "expected": {"music_genre": "classical"},
+    "note": "'보통'은 일반적 습관 표현 - 영속적 선호로 추출되어야 함"
+  },
+  {
+    "id": "boundary_ijeneun_with_persistence_marker",
+    "category": "boundary",
+    "utterance": "이제부터는 항상 22도로 맞춰줘",
+    "expected": {"temperature": 22},
+    "note": "'이제' 단독이면 일시성 신호지만, '이제부터는 항상'은 영속적 결정 표현 - temporality 예외가 과도하게 넓어지면 안 된다는 걸 확인하는 스트레스 테스트"
+  }
+]

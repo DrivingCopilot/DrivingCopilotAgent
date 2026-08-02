@@ -20,15 +20,40 @@ from app.core.config import ENTITY_PROFILE_PATH
 logger = logging.getLogger(__name__)
 
 _EXTRACTOR_SYSTEM_PROMPT = (
-    "You are a vehicle preference extractor.\n"
-    "Extract ONLY persistent vehicle preferences from the user message.\n"
-    "Focus on these categories: temperature, music_genre, navigation_voice, "
-    "seat_position, driving_mode, and similar vehicle settings.\n"
-    "IMPORTANT: Exclude any temporary or transient preferences that include time "
-    "references such as 'today', 'now', 'currently', 'right now', 'for today', "
-    "'지금', '오늘', '현재', or similar expressions.\n"
-    "Return ONLY a valid JSON object with no explanation, no markdown, no code fences.\n"
-    "If no persistent preferences are found, return {}."
+    "You are a vehicle preference extractor. Output ONLY a JSON object, nothing else — "
+    "no explanation, no markdown, no code fences.\n"
+    "\n"
+    "RULE 1 — CLOSED CATEGORY LIST: The ONLY valid keys are exactly these five: "
+    "temperature, music_genre, navigation_voice, seat_position, driving_mode. NEVER "
+    "output any other key, ever — not even for actions like wipers, windows, lights, "
+    "emergency calls, or any other one-off command. If the message is not clearly about "
+    "one of these five categories, output {}.\n"
+    "Example: '와이퍼 켜줘' -> {} (a wiper action is not one of the five categories)\n"
+    "Example: '와이퍼 좀 켜줄래' -> {} (a plain command, no preference stated at all)\n"
+    "\n"
+    "RULE 2 — SKIP TEMPORARY/ONE-TIME REQUESTS: If a preference is scoped to right now "
+    "or just this once, output {} for it — do not save it. Trigger words: '오늘', '지금', "
+    "'현재', 'today', 'now', 'currently', and their compound/inflected forms like "
+    "'오늘따라', '요즘은', '이제는' — UNLESS paired with a habitual word like '항상'(always)/"
+    "'보통'(usually)/'부터'(from now on), e.g. '이제부터는 항상' IS permanent.\n"
+    "Example: '오늘만 좀 따뜻하게, 25도로 해줘' -> {} (temporary — today only)\n"
+    "Example: '지금은 시트를 뒤로 밀어줘' -> {} (temporary — right now only)\n"
+    "Example: '요즘은 재즈보다 클래식이 좋아' -> {} (a recent trend, not settled yet)\n"
+    "Example: '나는 보통 클래식 들어' -> {\"music_genre\": \"classical\"} "
+    "('보통'=usually is a habitual marker, so this IS permanent)\n"
+    "\n"
+    "RULE 3 — NEGATION: If the user cancels a category from RULE 1's list (e.g. '더 이상 "
+    "재즈 안 들어', '시트 포지션 설정 취소해'), set ONLY that one category to JSON null (not "
+    "the string \"null\"). Do NOT set any other, unmentioned category to null — a plain "
+    "command or unrelated request is not a negation of anything.\n"
+    "Example: '네비 안내는 그만하고 온도는 20도로 해줘' -> "
+    "{\"navigation_voice\": null, \"temperature\": 20}\n"
+    "\n"
+    "RULE 4 — RESTATED VALUE: If a category is restated with a new value in the same "
+    "message (e.g. '재즈 별로, 클래식이 더 좋아' -> {\"music_genre\": \"classical\"}), output "
+    "the NEW value directly — do not output null for it.\n"
+    "\n"
+    "If no persistent preference is found at all, output {}."
 )
 
 
@@ -52,17 +77,35 @@ class EntityMemory:
         return data
 
     def update(self, prefs: dict[str, Any]) -> None:
-        """선호도를 last-write-wins 방식으로 병합 저장. 빈 dict → no-op."""
+        """선호도를 last-write-wins 방식으로 병합 저장.
+
+        prefs 값이 None인 키는 negation으로 간주하여 기존 프로필에서 삭제한다.
+        빈 dict → no-op.
+        """
         if not prefs:
             return
         existing = self.load()
-        existing.update(prefs)
+
+        deleted_keys = []
+        updated_keys = []
+        for key, value in prefs.items():
+            if value is None:
+                if key in existing:
+                    del existing[key]
+                    deleted_keys.append(key)
+            else:
+                existing[key] = value
+                updated_keys.append(key)
+
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(existing, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        logger.info("entity_memory 업데이트: %s", list(prefs.keys()))
+        if deleted_keys:
+            logger.info("entity_memory 삭제(negation): %s", deleted_keys)
+        if updated_keys:
+            logger.info("entity_memory 업데이트: %s", updated_keys)
 
 
 async def extract_preferences(user_message: str, llm: BaseChatModel) -> dict[str, Any]:

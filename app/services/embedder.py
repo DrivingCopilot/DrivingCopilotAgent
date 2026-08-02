@@ -150,10 +150,12 @@ class VehicleEmbedder:
         )
 
         # 필터 검색 속도를 높이기 위한 payload 인덱스 생성
+        # 이 인덱스를 실제로 사용하는 필터를 추가할 때는 metadata. 프리픽스 확인 필수
+        # (과거 route_type 필터 버그와 동일 원인: LangChain이 metadata를 payload["metadata"]에 중첩 저장)
         for field_name in ("source", "section", "content_type"):
             self._client.create_payload_index(
                 collection_name=COLLECTION_NAME,
-                field_name=field_name,                           # 인덱스를 생성할 필드명
+                field_name=f"metadata.{field_name}",              # 인덱스를 생성할 필드명
                 field_schema=qmodels.PayloadSchemaType.KEYWORD,  # 키워드 타입으로 인덱싱
             )
 

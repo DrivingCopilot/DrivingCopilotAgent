@@ -84,7 +84,7 @@ class ExperienceMemory:
             search_filter = Filter(
                 must=[
                     FieldCondition(
-                        key="route_type",
+                        key="metadata.route_type",
                         match=MatchValue(value=route_type),
                     )
                 ]
@@ -100,9 +100,12 @@ class ExperienceMemory:
         situation: str,
         lesson: str,
         route_type: str,
-    ) -> None:
+    ) -> bool:
         """
         실패 경험을 Qdrant에 저장한다. 실패 케이스에서만 호출.
+
+        근접 중복(같은 route_type 내 코사인 유사도 > EXPERIENCE_DEDUP_THRESHOLD)이면
+        저장을 스킵한다.
 
         payload 3필드:
             situation (page_content): 임베딩 대상. user query + route_type 등 요약
@@ -113,7 +116,14 @@ class ExperienceMemory:
             situation: user query + vehicle_state 요약 + route_type
             lesson: 개선 전략 1~2문장 (LLM 생성)
             route_type: 분류값 (rag|tool|vision|chat)
+
+        Returns:
+            실제로 저장했으면 True, 근접 중복으로 스킵했으면 False.
         """
+        if self._has_near_duplicate(situation, route_type):
+            logger.info("experience_memory 저장 스킵(근접 중복): route_type=%s", route_type)
+            return False
+
         doc = Document(
             page_content=situation,
             metadata={
@@ -123,10 +133,42 @@ class ExperienceMemory:
         )
         self._vectorstore.add_documents([doc])
         logger.info("experience_memory 저장: route_type=%s", route_type)
+        return True
 
     # ------------------------------------------------------------------
     # Qdrant 내부 처리
     # ------------------------------------------------------------------
+
+    def _has_near_duplicate(self, situation: str, route_type: str) -> bool:
+        """
+        같은 route_type 내에 근접 중복 situation이 있는지 확인한다.
+
+        similarity_search_with_score의 score는 코사인 유사도(1에 가까울수록 유사).
+        검색 자체가 실패하면 저장을 막지 않도록 False를 반환한다
+        (dedup 스킵보다 실패 경험 유실 방지가 우선).
+        """
+        search_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.route_type",
+                    match=MatchValue(value=route_type),
+                )
+            ]
+        )
+
+        try:
+            results = self._vectorstore.similarity_search_with_score(
+                situation, k=1, filter=search_filter
+            )
+        except Exception:
+            logger.warning("근접 중복 검색 실패, dedup 스킵하고 저장 진행", exc_info=True)
+            return False
+
+        if not results:
+            return False
+
+        _, score = results[0]
+        return score > EXPERIENCE_DEDUP_THRESHOLD
 
     def _ensure_collection(self) -> None:
         """
@@ -156,7 +198,7 @@ class ExperienceMemory:
 
         self._client.create_payload_index(
             collection_name=EXPERIENCE_COLLECTION_NAME,
-            field_name="route_type",
+            field_name="metadata.route_type",
             field_schema=qmodels.PayloadSchemaType.KEYWORD,
         )
 
