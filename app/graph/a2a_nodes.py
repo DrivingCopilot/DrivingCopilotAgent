@@ -11,7 +11,7 @@
 import json
 import logging
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 from app.a2a.client import A2AClient
 from app.a2a.models import A2ATaskRequest
@@ -24,7 +24,7 @@ from app.graph.state import AgentState
 logger = logging.getLogger(__name__)
 
 
-async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any]:
+async def _run_remote_agent(agent_name: str, state: AgentState) -> dict[str, Any]:
     card = get_card(agent_name)
     context = {
         "messages": serialize_messages(state.get("messages", [])),
@@ -105,16 +105,21 @@ async def _run_remote_agent(agent_name: str, state: AgentState) -> Dict[str, Any
     result = dict(response.result or {})
     if "messages" in result:
         result["messages"] = deserialize_messages(result["messages"])
+    # 성공 시에도 실패 시(위 90~103줄)와 동일하게 plan을 비운다 — 안 비우면
+    # supervisor가 넣어둔 낡은 plan이 남아 다음 supervisor_node 호출의
+    # [Current Plan] 컨텍스트에 그대로 다시 들어가고, 모델이 "아직 할 일이
+    # 남았다"고 오인해 같은 plan/next_agent를 무한 반복하는 루프가 생긴다.
+    result.setdefault("plan", [])
     return result
 
 
-async def knowledge_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def knowledge_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("knowledge", state)
 
 
-async def execution_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def execution_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("execution", state)
 
 
-async def perception_a2a_node(state: AgentState) -> Dict[str, Any]:
+async def perception_a2a_node(state: AgentState) -> dict[str, Any]:
     return await _run_remote_agent("perception", state)

@@ -9,7 +9,7 @@
 # 얇은 경계층이다.
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from app.a2a.models import A2ATaskRequest, A2ATaskResponse
 from app.a2a.serde import deserialize_messages, serialize_messages
@@ -57,7 +57,7 @@ async def dispatch_task(req: A2ATaskRequest) -> A2ATaskResponse:
 
     state = _build_state(req)
     try:
-        result: Dict[str, Any] = await node_fn(state)
+        result: dict[str, Any] = await node_fn(state)
     except Exception as exc:
         logger.exception("dispatch_task: %s 노드 실행 실패", req.agent_name)
         return A2ATaskResponse(

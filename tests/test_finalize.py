@@ -1,7 +1,7 @@
 """tests/test_finalize.py"""
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.messages import HumanMessage
 
 from app.agents.finalize import finalize_node

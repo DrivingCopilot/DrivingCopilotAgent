@@ -1,0 +1,422 @@
+[
+  {
+    "id": "tool_v2_001",
+    "query": "에어컨 좀 켜줄래",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "에어컨을 켰어요."
+  },
+  {
+    "id": "tool_v2_002",
+    "query": "온도 20도로 맞춰줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"temperature": 20, "on": true},
+    "expected_answer": "에어컨을 켜고 온도를 20℃로 설정했어요."
+  },
+  {
+    "id": "tool_v2_003",
+    "query": "더워 죽겠다, 시원하게 해줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "에어컨을 켰어요."
+  },
+  {
+    "id": "tool_v2_004",
+    "query": "히터 24도로 틀어줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"temperature": 24, "on": true},
+    "expected_answer": "에어컨을 켜고 온도를 24℃로 설정했어요."
+  },
+  {
+    "id": "tool_v2_005",
+    "query": "에어컨 그만 틀어",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "에어컨을 껐어요."
+  },
+  {
+    "id": "tool_v2_006",
+    "query": "너무 추워, 히터 좀 켜줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "에어컨을 켰어요."
+  },
+  {
+    "id": "tool_v2_007",
+    "query": "실내 온도 25도로 해줘",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"temperature": 25, "on": true},
+    "expected_answer": "에어컨을 켜고 온도를 25℃로 설정했어요."
+  },
+  {
+    "id": "tool_v2_008",
+    "query": "에어컨 잠깐 꺼둬",
+    "expected_tool_name": "control_climate",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "에어컨을 껐어요."
+  },
+  {
+    "id": "tool_v2_009",
+    "query": "광화문으로 안내해줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "광화문"},
+    "expected_answer": "'광화문'(으)로 길 안내를 시작합니다."
+  },
+  {
+    "id": "tool_v2_010",
+    "query": "여의도역까지 길 좀 찾아줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "여의도역"},
+    "expected_answer": "'여의도역'(으)로 길 안내를 시작합니다."
+  },
+  {
+    "id": "tool_v2_011",
+    "query": "우리 집 좀 안내해줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "우리 집"},
+    "expected_answer": "'우리 집'(으)로 길 안내를 시작합니다."
+  },
+  {
+    "id": "tool_v2_012",
+    "query": "근처 편의점으로 가는 길 알려줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "편의점"},
+    "expected_answer": "'편의점'(으)로 길 안내를 시작합니다."
+  },
+  {
+    "id": "tool_v2_013",
+    "query": "회사로 가는 경로 잡아줘",
+    "expected_tool_name": "set_navigation",
+    "expected_tool_params": {"destination": "회사"},
+    "expected_answer": "'회사'(으)로 길 안내를 시작합니다."
+  },
+  {
+    "id": "tool_v2_014",
+    "query": "노래 하나 틀어줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "play"},
+    "expected_answer": "음악을 재생합니다."
+  },
+  {
+    "id": "tool_v2_015",
+    "query": "지금 나오는 곡 좀 멈춰줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "pause"},
+    "expected_answer": "음악을 일시 정지했어요."
+  },
+  {
+    "id": "tool_v2_016",
+    "query": "이 곡 그만 듣고 싶어",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "pause"},
+    "expected_answer": "음악을 일시 정지했어요."
+  },
+  {
+    "id": "tool_v2_017",
+    "query": "다음 곡 좀 재생해줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "next"},
+    "expected_answer": "다음 곡으로 넘겼어요."
+  },
+  {
+    "id": "tool_v2_018",
+    "query": "방금 나온 곡으로 돌아가줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "prev"},
+    "expected_answer": "이전 곡으로 돌아갔어요."
+  },
+  {
+    "id": "tool_v2_019",
+    "query": "음악 다시 재생해줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "play"},
+    "expected_answer": "음악을 재생합니다."
+  },
+  {
+    "id": "tool_v2_020",
+    "query": "곡 좀 스킵해줘",
+    "expected_tool_name": "control_media",
+    "expected_tool_params": {"action": "next"},
+    "expected_answer": "다음 곡으로 넘겼어요."
+  },
+  {
+    "id": "tool_v2_021",
+    "query": "창문 좀 열어줄래",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": true},
+    "expected_answer": "창문을 열었습니다."
+  },
+  {
+    "id": "tool_v2_022",
+    "query": "바람 좀 쐬게 창문 내려줘",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": true},
+    "expected_answer": "창문을 열었습니다."
+  },
+  {
+    "id": "tool_v2_023",
+    "query": "창문 다 올려줘",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": false},
+    "expected_answer": "창문을 닫았습니다."
+  },
+  {
+    "id": "tool_v2_024",
+    "query": "비 들어오니까 창문 닫아줘",
+    "expected_tool_name": "control_window",
+    "expected_tool_params": {"is_open": false},
+    "expected_answer": "창문을 닫았습니다."
+  },
+  {
+    "id": "tool_v2_025",
+    "query": "실내등 좀 켜볼래",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "실내등을 켰습니다."
+  },
+  {
+    "id": "tool_v2_026",
+    "query": "어두운데 라이트 좀 켜줘",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "실내등을 켰습니다."
+  },
+  {
+    "id": "tool_v2_027",
+    "query": "조명 이제 꺼도 될 것 같아",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "실내등을 껐습니다."
+  },
+  {
+    "id": "tool_v2_028",
+    "query": "실내 램프 꺼줘",
+    "expected_tool_name": "control_lighting",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "실내등을 껐습니다."
+  },
+  {
+    "id": "tool_v2_029",
+    "query": "시트 조금 앞으로 밀어줘",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "forward"},
+    "expected_answer": "시트를 forward 방향으로 조절했어요."
+  },
+  {
+    "id": "tool_v2_030",
+    "query": "좌석 뒤쪽으로 젖혀줘",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "backward"},
+    "expected_answer": "시트를 backward 방향으로 조절했어요."
+  },
+  {
+    "id": "tool_v2_031",
+    "query": "시트 위쪽으로 올려줘",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "up"},
+    "expected_answer": "시트를 up 방향으로 조절했어요."
+  },
+  {
+    "id": "tool_v2_032",
+    "query": "좌석 낮춰줘",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "down"},
+    "expected_answer": "시트를 down 방향으로 조절했어요."
+  },
+  {
+    "id": "tool_v2_033",
+    "query": "시트 앞으로 당기고 등받이는 105도로 맞춰줘",
+    "expected_tool_name": "control_seat",
+    "expected_tool_params": {"direction": "forward", "recline_angle": 105},
+    "expected_answer": "시트를 forward 방향으로 조절했어요, 등받이 각도 105도."
+  },
+  {
+    "id": "tool_v2_034",
+    "query": "주차 보조 기능 켜줄래",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": true},
+    "expected_answer": "자동 주차 모드를 활성화했습니다."
+  },
+  {
+    "id": "tool_v2_035",
+    "query": "자동 주차 이제 그만 써도 돼",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": false},
+    "expected_answer": "자동 주차 모드를 해제했습니다."
+  },
+  {
+    "id": "tool_v2_036",
+    "query": "셀프 주차 기능 켜줘",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": true},
+    "expected_answer": "자동 주차 모드를 활성화했습니다."
+  },
+  {
+    "id": "tool_v2_037",
+    "query": "주차 보조 꺼줘",
+    "expected_tool_name": "control_parking",
+    "expected_tool_params": {"enable": false},
+    "expected_answer": "자동 주차 모드를 해제했습니다."
+  },
+  {
+    "id": "tool_v2_038",
+    "query": "사고 났어, 구급차 좀 불러줘",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "call"},
+    "expected_answer": "긴급 전화를 연결합니다."
+  },
+  {
+    "id": "tool_v2_039",
+    "query": "응급 상황이니까 전화 연결해줘",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "call"},
+    "expected_answer": "긴급 전화를 연결합니다."
+  },
+  {
+    "id": "tool_v2_040",
+    "query": "다른 차들한테 위험 알려줘야 해",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "alert"},
+    "expected_answer": "비상등을 켰습니다."
+  },
+  {
+    "id": "tool_v2_041",
+    "query": "비상 표시등 좀 켜줘",
+    "expected_tool_name": "trigger_emergency",
+    "expected_tool_params": {"kind": "alert"},
+    "expected_answer": "비상등을 켰습니다."
+  },
+  {
+    "id": "tool_v2_042",
+    "query": "연비 좋은 모드로 바꿔줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "eco"},
+    "expected_answer": "주행 모드를 eco로 변경했습니다."
+  },
+  {
+    "id": "tool_v2_043",
+    "query": "스포티하게 달리고 싶어",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "sport"},
+    "expected_answer": "주행 모드를 sport로 변경했습니다."
+  },
+  {
+    "id": "tool_v2_044",
+    "query": "평범한 주행 모드로 되돌려줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "normal"},
+    "expected_answer": "주행 모드를 normal로 변경했습니다."
+  },
+  {
+    "id": "tool_v2_045",
+    "query": "절약 모드 켜줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "eco"},
+    "expected_answer": "주행 모드를 eco로 변경했습니다."
+  },
+  {
+    "id": "tool_v2_046",
+    "query": "다이나믹 모드로 바꿔줘",
+    "expected_tool_name": "set_driving_mode",
+    "expected_tool_params": {"mode": "sport"},
+    "expected_answer": "주행 모드를 sport로 변경했습니다."
+  },
+  {
+    "id": "tool_v2_047",
+    "query": "와이퍼 좀 돌려줘",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "와이퍼를 켰습니다."
+  },
+  {
+    "id": "tool_v2_048",
+    "query": "비 그쳤으니까 와이퍼 그만 돌려도 돼",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "와이퍼를 껐습니다."
+  },
+  {
+    "id": "tool_v2_049",
+    "query": "앞이 잘 안 보여, 와이퍼 작동시켜줘",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": true},
+    "expected_answer": "와이퍼를 켰습니다."
+  },
+  {
+    "id": "tool_v2_050",
+    "query": "와이퍼 정지시켜줘",
+    "expected_tool_name": "control_wiper",
+    "expected_tool_params": {"on": false},
+    "expected_answer": "와이퍼를 껐습니다."
+  },
+  {
+    "id": "tool_v2_051",
+    "query": "지금 몇 킬로로 달리고 있어?",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "speed"},
+    "expected_answer": "현재 속도는 60km/h 입니다."
+  },
+  {
+    "id": "tool_v2_052",
+    "query": "엔진 회전수가 어느 정도야?",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "rpm"},
+    "expected_answer": "현재 RPM은 2000입니다."
+  },
+  {
+    "id": "tool_v2_053",
+    "query": "기름 얼마나 남았는지 궁금해",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "fuel"},
+    "expected_answer": "연료 잔량은 75% 입니다."
+  },
+  {
+    "id": "tool_v2_054",
+    "query": "배터리 상태 좀 봐줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "battery"},
+    "expected_answer": "배터리는 90% 입니다."
+  },
+  {
+    "id": "tool_v2_055",
+    "query": "타이어 공기압 확인해줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "tire_pressure"},
+    "expected_answer": "타이어 압력(psi) - 좌앞 33.0, 우앞 33.0, 좌뒤 32.0, 우뒤 33.0"
+  },
+  {
+    "id": "tool_v2_056",
+    "query": "뭔가 경고등 뜬 거 있나 봐줘",
+    "expected_tool_name": "query_dashboard",
+    "expected_tool_params": {"metric": "warning_lights"},
+    "expected_answer": "켜진 경고등이 없습니다."
+  },
+  {
+    "id": "tool_v2_057",
+    "query": "차 상태 전체적으로 한번 봐줄래",
+    "expected_tool_name": "get_vehicle_status",
+    "expected_tool_params": {},
+    "expected_answer": "속도 60km/h, RPM 2000, 연료 75%, 배터리 90%, 에어컨 OFF(22℃), 창문 열림, 와이퍼 OFF, 주행 모드 normal, 타이어 압력(psi, 좌앞/우앞/좌뒤/우뒤) 33.0/33.0/32.0/33.0, 경고등 없음."
+  },
+  {
+    "id": "tool_v2_058",
+    "query": "지금 차 컨디션 어때",
+    "expected_tool_name": "get_vehicle_status",
+    "expected_tool_params": {},
+    "expected_answer": "속도 60km/h, RPM 2000, 연료 75%, 배터리 90%, 에어컨 OFF(22℃), 창문 열림, 와이퍼 OFF, 주행 모드 normal, 타이어 압력(psi, 좌앞/우앞/좌뒤/우뒤) 33.0/33.0/32.0/33.0, 경고등 없음."
+  },
+  {
+    "id": "tool_v2_059",
+    "query": "운행 전에 전반적으로 점검 좀 해줘",
+    "expected_tool_name": "get_vehicle_status",
+    "expected_tool_params": {},
+    "expected_answer": "속도 60km/h, RPM 2000, 연료 75%, 배터리 90%, 에어컨 OFF(22℃), 창문 열림, 와이퍼 OFF, 주행 모드 normal, 타이어 압력(psi, 좌앞/우앞/좌뒤/우뒤) 33.0/33.0/32.0/33.0, 경고등 없음."
+  },
+  {
+    "id": "tool_v2_060",
+    "query": "차량 전반적인 상태 브리핑해줘",
+    "expected_tool_name": "get_vehicle_status",
+    "expected_tool_params": {},
+    "expected_answer": "속도 60km/h, RPM 2000, 연료 75%, 배터리 90%, 에어컨 OFF(22℃), 창문 열림, 와이퍼 OFF, 주행 모드 normal, 타이어 압력(psi, 좌앞/우앞/좌뒤/우뒤) 33.0/33.0/32.0/33.0, 경고등 없음."
+  }
+]

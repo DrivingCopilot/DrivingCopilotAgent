@@ -14,14 +14,13 @@ Perception Agent 단위 테스트.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from langchain_core.messages import HumanMessage
 
 
-def _make_state(context_data: dict | None = None, messages: list | None = None) -> Dict[str, Any]:
+def _make_state(context_data: dict | None = None, messages: list | None = None) -> dict[str, Any]:
     """테스트용 최소 AgentState 생성."""
     return {
         "messages": messages or [],

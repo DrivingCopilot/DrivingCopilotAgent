@@ -6,13 +6,11 @@ tmp_path fixture로 파일 격리. LLM은 AsyncMock.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.memory.entity import EntityMemory, extract_preferences, _EXTRACTOR_SYSTEM_PROMPT
-
+from app.memory.entity import EntityMemory, extract_preferences
 
 # ---------------------------------------------------------------------------
 # EntityMemory 테스트 (6)

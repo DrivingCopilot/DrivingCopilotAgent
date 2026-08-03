@@ -3,7 +3,7 @@
 # knowledge(8002)/execution(8003)/perception(8004) A2A 서버를 한 번에 띄운다.
 # Ctrl+C 시 trap으로 전부 정리된다.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 trap 'kill 0' EXIT
 

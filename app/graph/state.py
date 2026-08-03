@@ -1,5 +1,6 @@
-from typing import TypedDict, Annotated, Dict
 import operator
+from typing import Annotated, TypedDict
+
 from langgraph.graph.message import add_messages
 
 
@@ -22,5 +23,5 @@ class AgentState(TypedDict):
     context_data: Annotated[dict, merge_context]
 
     # 4. 실패 처리 (Retry) 로직
-    error_count: Dict[str, int]
+    error_count: dict[str, int]
     feedback: str

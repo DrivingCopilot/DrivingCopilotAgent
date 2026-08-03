@@ -61,7 +61,8 @@ class TestSendTaskFailure:
         assert resp.error_type == "timeout"
         assert resp.task_id == "t-1"
 
-    async def test_http_error_returns_error_response_with_parameter_type(self):
+    async def test_connect_error_returns_error_response_with_timeout_type(self):
+        """연결 거부(ConnectError)는 파라미터를 고쳐도 복구되지 않으므로 timeout으로 분류돼야 한다."""
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
 
@@ -69,7 +70,7 @@ class TestSendTaskFailure:
             resp = await A2AClient(base_url="http://localhost:8002").send_task(_make_request())
 
         assert resp.status == "error"
-        assert resp.error_type == "parameter"
+        assert resp.error_type == "timeout"
 
     async def test_never_returns_none(self):
         """fetch_card와 달리 실패해도 None이 아닌 A2ATaskResponse 객체를 반환해야 한다."""
@@ -81,3 +82,5 @@ class TestSendTaskFailure:
 
         assert resp is not None
         assert resp.status == "error"
+        # 연결 실패류(TransportError)가 아닌 진짜 알 수 없는 예외는 여전히 parameter로 분류돼야 한다.
+        assert resp.error_type == "parameter"

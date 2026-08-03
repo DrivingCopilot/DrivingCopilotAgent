@@ -33,6 +33,8 @@ knowledge_node(검색기)가 채운 검색 결과(context_data["last_knowledge_r
         correct                → refine_knowledge → observe
         incorrect | ambiguous  → transform_query  → knowledge (재검색, MAX_CRAG_ATTEMPTS 캡)
         (재검색 소진 시)        → refine_knowledge → observe   # best-effort
+        (knowledge_failed=True) → refine_knowledge → observe   # LLM 평가/재작성/정제 모두 생략,
+                                                                # refine_knowledge는 그대로 통과만 시킨다
 
 knowledge_node 연동(별도 담당):
     transform_query_node 는 context_data["refined_query"] 에 재작성된 쿼리를 기록한다.
@@ -49,14 +51,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.graph.state import AgentState
-from app.graph import ws as _ws
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from app.core.json_utils import extract_first_json_object
+from app.graph import ws as _ws
+from app.graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +69,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # 재검색(transform_query → knowledge) 최대 반복 횟수. 무한 루프 방지용.
-MAX_CRAG_ATTEMPTS = 1
+# 1회는 재작성 후 그 결과가 나빠도 재교정 기회가 없어 corrective 루프가 사실상 1-shot이었다.
+# 2회로 올려 계획서(CRAG: 재작성→재검색) 취지의 실질 보정 루프를 확보한다(캡으로 무한루프는 방지).
+MAX_CRAG_ATTEMPTS = 2
 
-# 평가/재작성/정제에 사용하는 LLM. knowledge Executor와 동일 계열(qwen2.5:1.5b)로 맞춘다.
+# grade가 categorical로 correct라도 confidence score가 이 값 미만이면 저신뢰로 보고
+# 재검색(transform)한다. 기존엔 _parse_grade가 산출한 score를 라우팅에 전혀 쓰지 않아
+# (죽은 신호), "correct score=0.30" 같은 애매한 통과가 그대로 종료됐다 — 이를 활성화한다.
+_CRAG_SCORE_FLOOR = 0.5
+
+# 평가/재작성/정제에 사용하는 LLM. knowledge Executor와 동일 계열(QWEN_TEXT_MODEL_NAME)로 맞춘다.
 # CRAG_MODEL 로 오버라이드 가능 — knowledge_node의 KNOWLEDGE_MODEL 규약과 동일.
-CRAG_GRADER_MODEL = os.getenv("CRAG_MODEL", "qwen2.5:1.5b")
+CRAG_GRADER_MODEL = os.getenv("CRAG_MODEL", QWEN_TEXT_MODEL_NAME)
 
 # grade 파싱 실패 등 예외 시 기본 판정 — transform(재검색)으로 흘려 교정 기회를 준다.
 _DEFAULT_GRADE = "ambiguous"
@@ -102,7 +112,16 @@ Keep the user's original intent. Output ONLY the rewritten query text — no exp
 REFINE_PROMPT = """You are the Knowledge Refiner in a Corrective RAG (CRAG) pipeline for an on-device driving copilot.
 Given the user's query and the retrieved knowledge, extract and recompose ONLY the parts relevant to the query.
 Remove unrelated strips, boilerplate, and noise. Preserve concrete facts, numbers, and steps.
+
+IMPORTANT — Source of truth: The "[Retrieved Knowledge]" text below IS an excerpt parsed directly from
+this vehicle's own official owner's manual and internal knowledge base. You already have direct access
+to it through this excerpt — never say you lack access to the manual, internal documents, or
+manufacturer data, and never tell the user to check the manual themselves or contact the manufacturer.
+If the excerpt is genuinely empty or irrelevant to the query, simply state in one line that the manual
+does not cover it — do not produce a generic apology/disclaimer instead.
+
 Output ONLY the refined knowledge as plain text — no preamble, no commentary.
+Always write the output in Korean (한국어), regardless of the language of the retrieved knowledge.
 """
 
 
@@ -110,7 +129,7 @@ Output ONLY the refined knowledge as plain text — no preamble, no commentary.
 # 내부 헬퍼
 # ---------------------------------------------------------------------------
 
-def _latest_user_query(messages: List[Any]) -> str:
+def _latest_user_query(messages: list[Any]) -> str:
     """messages에서 가장 최근 HumanMessage 내용을 반환 (supervisor 관례와 동일)."""
     return next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
@@ -134,7 +153,7 @@ def _effective_query(state: AgentState) -> str:
     return _latest_user_query(state.get("messages", []))
 
 
-def _parse_grade(content: str) -> Dict[str, Any]:
+def _parse_grade(content: str) -> dict[str, Any]:
     """LLM 출력에서 첫 JSON 객체를 안전 파싱해 grade dict로 정규화한다."""
     text = content.strip()
     if "```json" in text:
@@ -164,7 +183,7 @@ def _parse_grade(content: str) -> Dict[str, Any]:
 # 노드
 # ---------------------------------------------------------------------------
 
-async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
+async def grade_retrieval_node(state: AgentState) -> dict[str, Any]:
     """
     검색 결과 품질 평가자. context_data["last_knowledge_result"]를 LLM으로 평가해
     context_data["crag_grade"] = {grade, score, reasoning}를 기록한다.
@@ -178,10 +197,19 @@ async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
     retrieved = context_data.get("last_knowledge_result", "")
     query = _effective_query(state)
 
+    # knowledge_node 자체가 예외로 실패한 경우(knowledge_failed=True) — 평가할
+    # "검색 결과"가 애초에 없으므로 LLM 채점을 생략한다. route_after_grade가
+    # 이 grade와 무관하게 knowledge_failed를 직접 보고 refine으로 보낸다.
+    if context_data.get("knowledge_failed"):
+        logger.info("grade_retrieval: knowledge_failed=True — LLM 평가 생략")
+        grade = {"grade": "incorrect", "score": 0.0, "reasoning": "knowledge agent failed"}
+        return {"context_data": {"crag_grade": grade}}
+
     llm = ChatOpenAI(
         model=CRAG_GRADER_MODEL,
         temperature=0.0,
         max_tokens=200,
+        base_url=MODEL_SERVER_URL,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
 
@@ -205,7 +233,7 @@ async def grade_retrieval_node(state: AgentState) -> Dict[str, Any]:
     return {"context_data": {"crag_grade": grade}}
 
 
-async def transform_query_node(state: AgentState) -> Dict[str, Any]:
+async def transform_query_node(state: AgentState) -> dict[str, Any]:
     """
     쿼리 재작성 + 재검색 카운터 증가. context_data["refined_query"]에 재작성된 쿼리를
     기록하고 crag_attempts를 +1 한다. 실제 재검색은 그래프 배선(transform_query→knowledge)이
@@ -219,7 +247,7 @@ async def transform_query_node(state: AgentState) -> Dict[str, Any]:
     attempts = int(context_data.get("crag_attempts", 0)) + 1
     original_query = _effective_query(state)
 
-    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.2, max_tokens=200)
+    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.2, max_tokens=200, base_url=MODEL_SERVER_URL)
 
     try:
         response = await llm.ainvoke(
@@ -239,7 +267,7 @@ async def transform_query_node(state: AgentState) -> Dict[str, Any]:
     return {"context_data": {"refined_query": refined_query, "crag_attempts": attempts}}
 
 
-async def refine_knowledge_node(state: AgentState) -> Dict[str, Any]:
+async def refine_knowledge_node(state: AgentState) -> dict[str, Any]:
     """
     지식 정제(decompose-recompose). 검색 텍스트에서 무관한 부분을 제거하고 핵심만
     재구성해 context_data["last_knowledge_result"]를 정제본으로 덮어쓴다.
@@ -252,12 +280,17 @@ async def refine_knowledge_node(state: AgentState) -> Dict[str, Any]:
     retrieved = context_data.get("last_knowledge_result", "")
     query = _effective_query(state)
 
-    # 정제할 내용이 없으면 원본 유지
-    if not retrieved:
-        logger.info("refine_knowledge: 검색 결과 없음 — 정제 생략")
+    # 정제할 내용이 없거나(빈 검색 결과), knowledge_node 자체가 예외로 실패한
+    # 경우 — 후자는 last_knowledge_result에 에러 문자열이 들어있어 비어있지
+    # 않지만, 이걸 "정제(decompose-recompose)"해봐야 의미 없는 LLM 호출이다.
+    if not retrieved or context_data.get("knowledge_failed"):
+        logger.info(
+            "refine_knowledge: 정제 생략 (%s)",
+            "검색 결과 없음" if not retrieved else "knowledge_failed=True",
+        )
         return {"context_data": {}}
 
-    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.0, max_tokens=512)
+    llm = ChatOpenAI(model=CRAG_GRADER_MODEL, temperature=0.0, max_tokens=512, base_url=MODEL_SERVER_URL)
 
     try:
         response = await llm.ainvoke(
@@ -287,8 +320,17 @@ def route_after_grade(state: AgentState) -> str:
         "transform" → transform_query  (쿼리 재작성 후 knowledge 재검색)
     """
     cd = state.get("context_data", {})
-    grade = (cd.get("crag_grade") or {}).get("grade", _DEFAULT_GRADE)
+    crag_grade = cd.get("crag_grade") or {}
+    grade = crag_grade.get("grade", _DEFAULT_GRADE)
+    score = float(crag_grade.get("score", 0.0) or 0.0)
     attempts = int(cd.get("crag_attempts", 0))
+
+    # knowledge_node 자체가 예외로 실패한 경우 — "검색 결과가 부실하다"는
+    # CRAG의 전제가 성립하지 않는다(재작성해도 같은 예외가 다시 날 뿐이다).
+    # 재검색 없이 곧장 refine(정제도 생략하고 그대로 통과)으로 보낸다.
+    if cd.get("knowledge_failed"):
+        logger.info("route_after_grade: knowledge_failed=True → refine 직행(재검색 생략)")
+        return "refine"
 
     # 재검색 캡 소진 → grade 무관하게 정제 후 종료 (무한 루프 방지, best-effort)
     if attempts >= MAX_CRAG_ATTEMPTS:
@@ -296,8 +338,12 @@ def route_after_grade(state: AgentState) -> str:
         return "refine"
 
     if grade == "correct":
-        logger.info("route_after_grade: correct → refine")
+        # 저신뢰 correct(score<floor)는 애매한 통과 — 아직 재검색 여력이 있으면 한 번 더 교정한다.
+        if score < _CRAG_SCORE_FLOOR:
+            logger.info("route_after_grade: correct지만 저신뢰(score=%.2f<%.2f) → transform", score, _CRAG_SCORE_FLOOR)
+            return "transform"
+        logger.info("route_after_grade: correct(score=%.2f) → refine", score)
         return "refine"
 
-    logger.info("route_after_grade: %s → transform", grade)
+    logger.info("route_after_grade: %s(score=%.2f) → transform", grade, score)
     return "transform"

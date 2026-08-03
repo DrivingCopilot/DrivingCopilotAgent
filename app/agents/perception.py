@@ -5,7 +5,7 @@
 # 흐름:
 #     supervisor (next_agent=perception) → perception_node(state)
 #         ├ Backend MCP 의 get_camera_frame 으로 카메라 프레임(base64 JPEG) 조회
-#         ├ 프레임을 멀티모달 메시지로 감싸 Vision LLM(Qwen2-VL 7B FP16) 호출
+#         ├ 프레임을 멀티모달 메시지로 감싸 Vision LLM(Qwen2-VL 7B) 호출
 #         ├ 응답을 answer/hazards 로 구조화 파싱
 #         └ 분석 결과를 context_data.vision_results 에 담아 supervisor 로 복귀
 #             (hazard 감지 시 plan 에 자동 대응 조치를 채워 execution 으로 직행 — 아래 참고)
@@ -22,7 +22,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -39,14 +39,13 @@ logger = logging.getLogger(__name__)
 # hazard → execution agent 가 수행할 plan step. execution._extract_tool_call 이
 # 이 문자열을 보고 MCP tool/파라미터를 추출하므로, execution.py의 _TOOL_SIGNATURES
 # 표기와 맞춰서 작성한다 (app/agents/execution.py 참고).
-HAZARD_PLAN_STEPS: Dict[str, str] = {
+HAZARD_PLAN_STEPS: dict[str, str] = {
     "rain": "비가 감지되었습니다. 와이퍼를 켜세요. (control_wiper on=true)",
     "tunnel": "터널 진입이 감지되었습니다. 전조등을 켜세요. (control_lighting on=true)",
     "warning_light": "경고등이 감지되었습니다. 대시보드 경고등 상태를 조회하세요. (query_dashboard metric=warning_lights)",
 }
 
 _KNOWN_HAZARDS = tuple(HAZARD_PLAN_STEPS.keys())
-
 
 class PerceptionVisionResult(BaseModel):
     """
@@ -65,11 +64,11 @@ class PerceptionVisionResult(BaseModel):
     """
 
     answer: str = ""
-    hazards: List[str] = []
+    hazards: list[str] = []
 
     @field_validator("hazards")
     @classmethod
-    def _filter_unknown_hazards(cls, v: List[str]) -> List[str]:
+    def _filter_unknown_hazards(cls, v: list[str]) -> list[str]:
         return [h for h in v if h in _KNOWN_HAZARDS]
 
 
@@ -117,7 +116,7 @@ def _parse_vision_response(raw: str) -> PerceptionVisionResult:
 _CLEAR_WEATHER_KEYWORDS = ("맑", "화창", "clear", "비 안", "비가 안", "눈 안", "눈이 안")
 
 
-def _sanity_check_hazards(text: str, hazards: List[str]) -> List[str]:
+def _sanity_check_hazards(text: str, hazards: list[str]) -> list[str]:
     """answer가 명시적으로 맑은 날씨를 서술하면 hazards의 'rain'을 제거한다."""
     if "rain" in hazards and any(kw in text for kw in _CLEAR_WEATHER_KEYWORDS):
         return [h for h in hazards if h != "rain"]
@@ -125,7 +124,7 @@ def _sanity_check_hazards(text: str, hazards: List[str]) -> List[str]:
 
 
 # 모듈 레벨 싱글턴 — execution.py 의 _EXTRACTION_LLM 과 동일한 lazy init 패턴.
-_VISION_LLM: Optional[ChatOpenAI] = None
+_VISION_LLM: ChatOpenAI | None = None
 
 
 def _get_vision_llm() -> ChatOpenAI:
@@ -138,9 +137,9 @@ def _get_vision_llm() -> ChatOpenAI:
     return _VISION_LLM
 
 
-async def perception_node(state: AgentState) -> Dict[str, Any]:
+async def perception_node(state: AgentState) -> dict[str, Any]:
     """Perception Agent 노드. 카메라 프레임을 조회해 Vision LLM 으로 분석한다."""
-    context_data: Dict[str, Any] = dict(state.get("context_data", {}))
+    context_data: dict[str, Any] = dict(state.get("context_data", {}))
     messages = state.get("messages", [])
     user_question = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
@@ -189,6 +188,17 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
                 },
             },
             "plan": [],
+            # execution.py와 동일한 계약으로 tool_calls에 append한다 — observe_node는
+            # tool_calls[-1]만 보고 성공/실패를 판정하는데, perception이 여기 아무것도
+            # 안 쓰면 observe가 몇 턴 전 다른 agent의 결과를 재관측하게 된다.
+            "tool_calls": [{
+                "tool": "perception",
+                "params": {"camera_id": "front"},
+                "result": error_msg,
+                "status": "error",
+                "error_type": error_type or "parameter",
+                "error_msg": error_msg,
+            }],
         }
 
     # ── 2. Vision LLM 호출 ───────────────────────────────────────────────────
@@ -211,6 +221,17 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
                 },
             },
             "plan": [],
+            "tool_calls": [{
+                "tool": "perception",
+                "params": {"camera_id": "front"},
+                "result": str(exc),
+                "status": "error",
+                # observe.py의 MAX_RETRY 키(timeout/parameter/invalid_tool/sql)에
+                # "vlm"은 없다 — observe가 알아서 "parameter"로 폴백하지만, 여기서
+                # 명시적으로 넘겨 관측/로그의 일관성을 유지한다.
+                "error_type": "parameter",
+                "error_msg": str(exc),
+            }],
         }
 
     logger.debug("perception_node: VLM 원본 응답=%r", response.content)
@@ -235,4 +256,15 @@ async def perception_node(state: AgentState) -> Dict[str, Any]:
         # hazard 감지 시 execution agent 가 바로 실행할 plan (route_after_perception 참고).
         # 없으면 빈 리스트로 명시 — 이전에 perception 위임용으로 쓰였던 stale plan을 정리한다.
         "plan": plan_steps,
+        # hazard 유무와 무관하게 append한다 — hazard 없으면 observe로 바로 가서
+        # 이번 성공을 관측해야 하고(예전엔 여기서 안 써서 observe가 몇 턴 전
+        # 다른 agent의 stale 결과를 재관측했다), hazard 있으면 execution으로
+        # 직행하지만 execution이 뒤이어 자기 tool_calls를 또 append하므로 두
+        # 항목이 순서대로 남는 것도 이력상 자연스럽다.
+        "tool_calls": [{
+            "tool": "perception",
+            "params": {"camera_id": "front"},
+            "result": result.answer,
+            "status": "success",
+        }],
     }

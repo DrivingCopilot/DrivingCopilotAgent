@@ -31,6 +31,9 @@ data/user_profile.json
 # 평가 산출물 (gold-set 러너 리포트)
 evaluation/reports/
 
+# 디버깅용 trace 산출물
+traces/
+
 # 로컬 참고 문서 및 개인 설정
 gemini.md
 Driving_Copilot_Plan.md

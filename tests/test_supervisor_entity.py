@@ -1,7 +1,7 @@
 """tests/test_supervisor_entity.py"""
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.supervisor import SupervisorDecision, supervisor_node

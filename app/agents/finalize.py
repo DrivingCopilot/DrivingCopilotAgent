@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 
@@ -34,6 +34,7 @@ def _get_extractor_llm():
     global _extractor_llm
     if _extractor_llm is None:
         from langchain_openai import ChatOpenAI
+
         from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
         _extractor_llm = ChatOpenAI(
             model=QWEN_TEXT_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
@@ -41,7 +42,7 @@ def _get_extractor_llm():
     return _extractor_llm
 
 
-async def finalize_node(state: AgentState) -> Dict[str, Any]:
+async def finalize_node(state: AgentState) -> dict[str, Any]:
     messages = state.get("messages", [])
     user_message = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""

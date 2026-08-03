@@ -1,10 +1,7 @@
-import json
 
 import pytest
-from unittest.mock import AsyncMock
 
-from app.agents.observe import observe_node, _classify_last_tool, MAX_RETRY
-
+from app.agents.observe import _classify_last_tool, observe_node
 
 # ---------------------------------------------------------------------------
 # _classify_last_tool 테스트(6)

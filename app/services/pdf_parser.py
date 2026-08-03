@@ -12,12 +12,16 @@ app/services/pdf_parser.py
 
 from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트가 동작하도록 함
 
-import re           # 정규 표현식 모듈 (노이즈 패턴 감지 및 제거에 사용)
+import re  # 정규 표현식 모듈 (노이즈 패턴 감지 및 제거에 사용)
 from pathlib import Path  # 파일 경로를 문자열이 아닌 객체로 다루기 위한 모듈
 
 import fitz  # PyMuPDF 라이브러리. PDF 내부 폰트 크기 등 상세 구조 정보 추출에 사용
-from langchain_core.documents import Document  # LangChain의 기본 문서 단위. page_content + metadata 구조
-from langchain_community.document_loaders import PyMuPDFLoader  # LangChain 제공 PDF 로더. 페이지 단위로 텍스트 추출
+from langchain_community.document_loaders import (
+    PyMuPDFLoader,  # LangChain 제공 PDF 로더. 페이지 단위로 텍스트 추출
+)
+from langchain_core.documents import (
+    Document,  # LangChain의 기본 문서 단위. page_content + metadata 구조
+)
 
 
 def _clean_text(raw: str) -> str:
@@ -112,11 +116,9 @@ def _detect_section(fitz_page: fitz.Page, body_size: float) -> str:
                 text = span.get("text", "").strip()  # span의 텍스트 추출 및 공백 제거
                 size = span.get("size", 0)           # span의 폰트 크기 추출
 
-                # 본문보다 폰트가 크고 3자 이상인 텍스트를 섹션 헤더로 판단
-                if size > body_size:
-                    # 깨진문자가 섹션으로 인식되는걸 막기위해 영어나 한글이 들어가 있는 경우에만 섹션으로 인식하도록 함
-                    if re.search(r'[가-힣a-zA-Z]', text):
-                        return text
+                # 본문보다 폰트가 크고, 깨진문자 방지를 위해 영어/한글이 포함된 경우에만 섹션 헤더로 판단
+                if size > body_size and re.search(r'[가-힣a-zA-Z]', text):
+                    return text
 
     return ""  # 헤더를 찾지 못한 경우 빈 문자열 반환
 
@@ -165,7 +167,7 @@ class VehiclePDFParser:
             current_section = ""  # 현재 섹션 추적 (페이지를 넘어서도 유지)
 
             # PyMuPDFLoader 결과와 fitz 페이지를 동시에 순회
-            for lc_page, fitz_page in zip(lc_pages, fitz_doc):
+            for lc_page, fitz_page in zip(lc_pages, fitz_doc, strict=False):
 
                 # LangChain의 page는 0-indexed → 1-indexed로 변환
                 page_num = lc_page.metadata.get("page", 0) + 1

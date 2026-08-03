@@ -17,7 +17,9 @@ LangChain SemanticChunker를 사용해 Document 리스트를 청크로 분할한
 from __future__ import annotations  # Python 3.9 이하에서도 타입 힌트가 동작하도록 함
 
 from langchain_core.documents import Document  # LangChain의 기본 문서 단위
-from langchain_experimental.text_splitter import SemanticChunker as LangChainSemanticChunker  # LangChain 시맨틱 청커
+from langchain_experimental.text_splitter import (
+    SemanticChunker as LangChainSemanticChunker,  # LangChain 시맨틱 청커
+)
 from langchain_huggingface import HuggingFaceEmbeddings  # LangChain 기반 HuggingFace 임베딩 래퍼
 
 

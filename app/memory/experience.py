@@ -13,13 +13,13 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client.http import models as qmodels
-from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from app.core.config import (
-    MODEL_NAME,
-    VECTOR_SIZE,
     EXPERIENCE_COLLECTION_NAME,
     EXPERIENCE_DEDUP_THRESHOLD,
+    MODEL_NAME,
+    VECTOR_SIZE,
 )
 from app.services.qdrant_client import get_qdrant_client
 

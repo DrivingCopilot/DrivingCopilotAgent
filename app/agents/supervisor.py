@@ -9,19 +9,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Literal
+from typing import Any, Literal
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
 from app.agents.execution import MCP_TOOLS as _MCP_TOOL_NAMES
-from app.core.config import AGENT_PORT, MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
+from app.agents.supervisor_prompts import SUPERVISOR_SYSTEM_PROMPT
+from app.core.config import (
+    AGENT_PORT,
+    EXPERIENCE_TOP_K,
+    MAX_RETRY,
+    MODEL_SERVER_URL,
+    QWEN_VL_MODEL_NAME,
+    WINDOW_SIZE,
+)
 from app.graph import ws as _ws
 from app.graph.state import AgentState
-from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
 from app.memory.experience import build_situation, get_experience_memory
 
 logger = logging.getLogger(__name__)
@@ -44,7 +51,7 @@ _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 # perception.py의 HAZARD_PLAN_STEPS와 동일한 controlled vocabulary에 대한
 # 사용자 안내용 한국어 라벨. _compose_vision_summary가 answer 없이 hazards만
 # 있는 경우(질문 없는 자동 트리거 등)의 통보 문구에 사용한다.
-HAZARD_LABELS: Dict[str, str] = {
+HAZARD_LABELS: dict[str, str] = {
     "rain": "비",
     "tunnel": "터널",
     "warning_light": "경고등",
@@ -54,7 +61,7 @@ HAZARD_LABELS: Dict[str, str] = {
 # 7B 모델이 reasoning에서는 "execution agent가 처리해야 한다"고 결론 내리고도
 # next_agent 필드는 "__end__"로 내보내는 instruction-following 불일치를
 # 코드 레벨에서 바로잡는 데 쓴다 (perception 재호출 차단과 반대 방향의 보정).
-_AGENT_NAME_HINTS: Dict[str, List[str]] = {
+_AGENT_NAME_HINTS: dict[str, list[str]] = {
     "execution": ["execution agent", "delegate to 'execution'", "delegate to execution"],
     "knowledge": ["knowledge agent", "delegate to 'knowledge'", "delegate to knowledge"],
     "perception": ["perception agent", "delegate to 'perception'", "delegate to perception"],
@@ -71,7 +78,7 @@ class SupervisorDecision(BaseModel):
     """
 
     reasoning: str = Field(..., description="Brief chain-of-thought explanation of the decision.")
-    plan: List[str] = Field(..., description="Step-by-step execution plan as strings.")
+    plan: list[str] = Field(..., description="Step-by-step execution plan as strings.")
     next_agent: Literal["knowledge", "execution", "perception", "__end__"] = Field(
         ..., description="Exactly one of the available sub-agent names, or '__end__' if the task is complete."
     )
@@ -87,19 +94,7 @@ def _infer_intended_agent(reasoning: str) -> str | None:
     return mentioned[0] if len(mentioned) == 1 else None
 
 
-# LangGraph 내부 라우팅 예약어. SupervisorDecision.plan은 List[str]일 뿐 값
-# 자체엔 제약이 없어(217~227줄 grammar-constrained decoding은 스키마 이탈만
-# 막는다), 모델이 next_agent에 쓰는 값을 plan 스텝으로 착각해 그대로
-# hallucinate할 수 있다(예: plan=["__end__"]) — WS로 내보내기 전에 걸러낸다.
-_INTERNAL_ROUTING_TOKENS = {"__end__", "end", "__start__", "start"}
-
-
-def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
-    """plan 배열에서 LangGraph 내부 라우팅 예약어만 제거한다(사용자 노출용)."""
-    return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
-
-
-def _plan_repeats_completed_tools(plan: List[str], done_tools: set) -> bool:
+def _plan_repeats_completed_tools(plan: list[str], done_tools: set) -> bool:
     """
     plan의 모든 스텝이 "이번 턴에 이미 성공적으로 실행된 tool"만 다시 가리키면
     True. 리뷰 코멘트로 지적된 문제 — "execution이 한 번 성공하면 무조건
@@ -120,7 +115,19 @@ def _plan_repeats_completed_tools(plan: List[str], done_tools: set) -> bool:
     return True
 
 
-def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
+# LangGraph 내부 라우팅 예약어. SupervisorDecision.plan은 list[str]일 뿐 값
+# 자체엔 제약이 없어(217~227줄 grammar-constrained decoding은 스키마 이탈만
+# 막는다), 모델이 next_agent에 쓰는 값을 plan 스텝으로 착각해 그대로
+# hallucinate할 수 있다(예: plan=["__end__"]) — WS로 내보내기 전에 걸러낸다.
+_INTERNAL_ROUTING_TOKENS = {"__end__", "end", "__start__", "start"}
+
+
+def _filter_internal_plan_steps(plan: list[str]) -> list[str]:
+    """plan 배열에서 LangGraph 내부 라우팅 예약어만 제거한다(사용자 노출용)."""
+    return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
+
+
+def _compose_vision_summary(vision_results: dict[str, Any]) -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
 
@@ -154,7 +161,7 @@ def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     return "질문에 대한 답을 카메라 분석 결과에서 생성하지 못했습니다."
 
 
-def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
+def _compose_tool_result_summary(last_tool_call: dict[str, Any]) -> str:
     """
     execution 위임 완료 후 최종 답변을 last_tool_call로부터 결정적으로 구성한다.
     _compose_vision_summary와 동일한 원칙 — reasoning(CoT)은 instruction-following
@@ -187,55 +194,9 @@ async def _build_dynamic_agent_cards() -> str:
     return cards_str
 
 
-SUPERVISOR_SYSTEM_PROMPT = """You are a highly capable Supervisor Agent orchestrating a Multi-Agent System for a Driving Copilot.
-Your role is to analyze the user's request, evaluate the current context, and coordinate sub-agents using a 'Plan-and-Execute' pattern.
-You rely on Chain-of-Thought reasoning to make decisions.
-
-[Available Sub-Agents (Dynamic Agent Cards)]
-{agent_cards}
-
-[Rules & Protocol]
-1. Use A2A delegation by selecting the appropriate agent from the list above.
-2. If the user's request requires understanding the physical environment (e.g. weather, road, obstacles, warning lights) AND 'Vision/Perception Results' below is EMPTY, delegate to 'perception'. Never delegate to 'perception' twice in a row — if it is already populated, you have your answer (see Rule 6).
-3. If the user's request requires manuals or relational knowledge, delegate to 'knowledge'.
-   - IMPORTANT Context Fusion: Evaluate if the current context has adequate 'Vector RAG' and 'Graph RAG' data. If entities and relationships are unclear, explicitly instruct the 'knowledge' agent to use Graph RAG.
-4. If the user requests an action or structured data retrieval, delegate to 'execution'. The "plan" MUST
-   name the EXACT MCP tool that literally matches the user's request, chosen from execution's MCP Tools
-   list above — never substitute an unrelated tool just because it appears in the list. If the user's
-   words map directly to a tool name (e.g. "wiper"/"와이퍼" -> control_wiper), use that tool. Do NOT default
-   to "trigger_emergency" or "set_driving_mode" unless the user explicitly asks for an emergency action or
-   a driving-mode change.
-   Examples:
-   - User: "와이퍼 켜줘" -> plan: ["control_wiper on=true"], next_agent: "execution"
-   - User: "에어컨 22도로 켜줘" -> plan: ["control_climate temperature=22 on=true"], next_agent: "execution"
-   - User: "긴급 상황이야 신고해줘" -> plan: ["trigger_emergency kind=call"], next_agent: "execution"
-5. An EMPTY 'Vector RAG'/'Graph RAG' result is normal and expected for requests that are about vision/physical-environment or vehicle actions — it does NOT mean the request is unanswerable. Only treat it as missing information when the request actually needs manual/relational knowledge (Rule 3).
-6. If 'Vision/Perception Results' or 'Last Tool Call Result' already contains a relevant result for the request — whether it succeeded or failed — that IS sufficient: output "__end__" and summarize it (including any failure) for the user in 'reasoning'.
-7. If 'Vision/Perception Results' shows detected hazards (e.g. rain, tunnel, warning_light) AND 'Last Tool Call Result' shows a related action was already taken, explicitly mention BOTH the detected condition and the action taken in your summary — the action was triggered automatically by the Perception agent, not requested by the user.
-8. Always output your response in strictly valid JSON format.
-9. The JSON must contain three keys:
-   - "reasoning": A brief explanation of your thought process (Chain-of-Thought).
-   - "plan": A list of step-by-step strings for the execution plan.
-   - "next_agent": One of the agent names from the registry, or "__end__" if the task is complete.
-10. "next_agent" MUST be consistent with your own "reasoning". If your reasoning concludes that a
-    specific sub-agent (knowledge/execution/perception) needs to act, "next_agent" MUST be that
-    agent's name — never output "__end__" while your reasoning says a sub-agent should handle the
-    request. Only output "__end__" when your reasoning concludes the request is already answered
-    or cannot be delegated further.
-
-[Error Recovery Protocol]
-When a 'Reflexion Feedback' indicates a tool failure, choose the recovery strategy based on the error_type:
-
-- error_type='timeout': The tool call timed out. Retry with the SAME tool and SAME parameters. The failure is likely transient.
-- error_type='parameter': The tool was correct but parameters were invalid. Retry with the SAME tool but FIX the parameters based on the error message.
-- error_type='invalid_tool': The tool itself was wrong for this task. Choose a DIFFERENT tool. Do not call the same tool again.
-- error_type='sql': SQL generation failed against the database. Re-examine the schema and regenerate a corrected SQL query. Use the same 'knowledge' agent with a corrected SQL.
-
-Always include your error_recovery reasoning in the 'reasoning' field of your JSON output when responding to a failure.
-"""
 
 
-async def supervisor_node(state: AgentState) -> Dict[str, Any]:
+async def supervisor_node(state: AgentState) -> dict[str, Any]:
     """
     LangGraph 기반 Supervisor Node (Qwen2-VL 7B 활용)
     1. WebSocket 실시간 스트리밍 연동
@@ -313,6 +274,7 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
 - Previous Agent Hint: {current_next_agent}
 - Vector RAG Results: {vector_rag}
 - Graph RAG Results: {graph_rag}
+- Last Knowledge Result: {last_knowledge_result}
 - Vehicle State: {vehicle_state}
 - Retrieved Experience (past lessons): {retrieved_experience}
 - User Profile (preferences): {profile}
@@ -344,9 +306,35 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     try:
         llm_result = await structured_llm.ainvoke(messages_to_send)
     except Exception as e:
-        logger.error(f"supervisor_node 완료 (LLM 호출 예외): {e}")
-        await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error"}))
-        return {"next_agent": "__end__"}
+        # 잘린 JSON(EOF while parsing)이나 일시적 모델 서버 오류가 include_raw의
+        # parsing_error로 잡히지 못하고 예외로 올라오는 경우 — 즉시 포기하지 않고
+        # 아래 parsing_error 분기와 동일한 재시도 계약으로 처리한다(한도 내 재시도 후
+        # 한도 초과 시에만 사용자에게 실패 안내). 침묵 방지: 어느 경로든 done 전에
+        # 반드시 text를 먼저 보낸다.
+        logger.error(f"supervisor_node (LLM 호출 예외, 재시도 처리): {e}")
+        updated_error_count = dict(error_count)
+        updated_error_count["parameter"] = updated_error_count.get("parameter", 0) + 1
+        count = updated_error_count["parameter"]
+        limit = MAX_RETRY.get("parameter", 2)
+
+        if count >= limit:
+            logger.error(f"Supervisor LLM 호출 retry limit exceeded: {count}/{limit}")
+            user_msg = f"응답 생성에 {count}회 실패했습니다. 요청을 처리할 수 없습니다."
+            await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": user_msg}))
+            await _ws.websocket_manager.send_status(json.dumps({"type": "done", "reason": "llm_error_limit"}))
+            return {
+                "error_count": updated_error_count,
+                "feedback": f"Supervisor LLM call failed {count}/{limit} times: {e}",
+                "next_agent": "__end__",
+                "messages": [AIMessage(content=user_msg)],
+            }
+
+        await _ws.websocket_manager.send_status(json.dumps({"type": "status", "data": f"응답 생성 재시도 중... ({count}/{limit})"}))
+        return {
+            "error_count": updated_error_count,
+            "feedback": f"Supervisor LLM call raised (attempt {count}/{limit}): {e}",
+            "next_agent": "supervisor",
+        }
 
     parsing_error = llm_result.get("parsing_error")
     if parsing_error is not None:
@@ -397,6 +385,19 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         next_agent = "__end__"
         new_plan = []
 
+    # 안전장치(perception과 동일한 원칙): last_knowledge_result 가 이미 채워져
+    # 있는데도 LLM 이 Rule 6("Last Knowledge Result 가 있으면 __end__")을 무시하고
+    # knowledge 를 다시 호출하려 하면 — 프롬프트만으로는 이 모델이 신뢰성 있게
+    # 안 따르는 게 실측으로 확인됨 — 코드 레벨에서 강제로 종료 처리한다.
+    if next_agent == "knowledge" and last_knowledge_result:
+        logger.warning(
+            "supervisor_node: Rule 6 위반 감지(knowledge 재호출 차단, last_knowledge_result=%r) "
+            "— __end__ 로 강제 전환",
+            last_knowledge_result,
+        )
+        next_agent = "__end__"
+        new_plan = []
+
     # 안전장치: execution이 이번 턴에 성공했는데도 LLM이 '이미 완료된 것과 같은'
     # plan으로 다시 'execution'을 선택하면 강제로 종료 처리한다(perception Rule 2
     # 위반 차단과 동일한 원리). 단, "타이어 공기압 확인하고 비정상이면 정비소로
@@ -420,9 +421,13 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
     # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면
     # 무한루프 위험)라면 모델의 __end__ 판단을 신뢰하고 덮어쓰지 않는다.
+    # knowledge/perception도 execution과 동일하게 tool_calls에 append하므로
+    # (observe_node의 단일 관측 계약), last_tool_call이 있다는 사실만으로는
+    # "execution이 방금 실행됐다"를 보장하지 못한다 — tool_calls[-1]이 실제로
+    # execution 항목인지 이름으로 확인한다.
     _agent_has_fresh_result = {
-        "execution": bool(last_tool_call),
-        "knowledge": bool(vector_rag or graph_rag),
+        "execution": last_tool_call.get("tool") == "execution",
+        "knowledge": bool(last_knowledge_result or vector_rag or graph_rag),
         "perception": bool(vision_results),
     }
     if next_agent == "__end__":
@@ -454,6 +459,14 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     elif next_agent == "__end__" and last_knowledge_result:
         final_text = last_knowledge_result
 
+    # 최후의 안전망: 위 우선순위 체인을 다 거치고도 final_text가 비어있는 채로
+    # (예: reasoning조차 빈 문자열) 턴이 끝나면, 아래 type:"text" 전송이 스킵되고
+    # done만 나가 사용자는 완전 침묵을 겪는다 — knowledge/model_server 쪽 원인을
+    # 막아도 다른 경로로 같은 증상이 재현될 수 있으므로 여기서 구조적으로 항상
+    # 텍스트가 나가도록 보장한다.
+    if next_agent == "__end__" and not final_text:
+        final_text = "요청을 처리했지만 표시할 결과가 없습니다."
+
     # frontend AG-UI 프로토콜: reasoning(사고 과정 accordion), plan(실행 계획 카드)을
     # 각각의 프레임으로 전달한다. WS로 나가는 plan은 라우팅에 쓰이는 new_plan과
     # 별개로 필터링한다 — route_next 등이 참조하는 반환값(new_plan)은 그대로 둔다.
@@ -467,9 +480,9 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
 
     if next_agent == "__end__":
         # 턴이 종료될 때만 최종 답변을 type:"text" 로 노출한다 — 진행 중인 위임
-        # 단계에서는 reasoning이 CoT일 뿐 사용자에게 보일 답변이 아니다.
-        if final_text:
-            await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": final_text}))
+        # 단계에서는 reasoning이 CoT일 뿐 사용자에게 보일 답변이 아니다. 위
+        # 안전망 덕분에 이 시점의 final_text는 항상 non-empty다.
+        await _ws.websocket_manager.send_status(json.dumps({"type": "text", "data": final_text}))
         await _ws.websocket_manager.send_status(json.dumps({"type": "done"}))
 
     logger.info(

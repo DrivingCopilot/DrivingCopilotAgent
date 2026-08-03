@@ -14,9 +14,9 @@ Usage:
 """
 
 import argparse  # 커맨드라인 인자 파싱용
-import logging   # 진행 상황 로깅용
-import sys       # 프로그램 종료용
-import time      # 실행 시간 측정용
+import logging  # 진행 상황 로깅용
+import sys  # 프로그램 종료용
+import time  # 실행 시간 측정용
 from pathlib import Path  # 파일 경로 존재 여부 확인용
 
 logging.basicConfig( 
@@ -33,7 +33,7 @@ def run_chunk(pdf_path: str):
     파싱 + 청킹 결과를 확인한다. Qdrant 없이도 실행 가능.
     청크 품질 확인 후 임베딩으로 넘어가기 위한 중간 검증 단계.
     """
-    from pdf_parser import VehiclePDFParser      # PDF 파싱 클래스
+    from pdf_parser import VehiclePDFParser  # PDF 파싱 클래스
     from semantic_chunker import SemanticChunker  # 시맨틱 청킹 클래스
 
     # STEP 1: PDF 파싱
