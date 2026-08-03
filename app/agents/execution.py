@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.mcp_client import call_mcp_tool_raw as _call_mcp_tool_raw
@@ -89,7 +90,8 @@ Rules:
 
 # 모듈 레벨 싱글턴 — plan step마다 새 인스턴스를 만들지 않는다.
 # None 으로 시작하는 lazy init: import 시점에 API key 검증을 하지 않는다.
-# TODO: 로컬 qwen2-vl 서버 기동 후 base_url 추가
+# plan 텍스트 → tool/파라미터 추출은 비전이 필요 없는 순수 텍스트 작업이라
+# 7B VL 모델 대신 1.5B 텍스트 모델(QWEN_TEXT_MODEL_NAME)로 충분하다.
 _EXTRACTION_LLM: Optional[ChatOpenAI] = None
 
 
@@ -97,7 +99,9 @@ def _get_extraction_llm() -> ChatOpenAI:
     """_EXTRACTION_LLM 싱글턴을 반환한다. 최초 호출 시 생성된다."""
     global _EXTRACTION_LLM
     if _EXTRACTION_LLM is None:
-        _EXTRACTION_LLM = ChatOpenAI(model="qwen2.5vl:7b", temperature=0.0)
+        _EXTRACTION_LLM = ChatOpenAI(
+            model=QWEN_TEXT_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
+        )
     return _EXTRACTION_LLM
 
 
@@ -253,10 +257,32 @@ async def run_execution(state: AgentState) -> Dict[str, Any]:
             else:
                 new_vehicle_state[f"last_{tool_name}"] = result_text
 
+    # plan의 모든 step이 tool 추출/매칭에 실패하면 new_tool_calls가 빈 채로
+    # 끝난다. observe_node._classify_last_tool은 빈 tool_calls를 "empty"로
+    # 분류해 success와 동일하게 카운트 없이 supervisor로 돌려보내는데(observe.py),
+    # supervisor가 같은 입력으로 같은 판단(예: 존재하지 않는 tool로 재위임)을
+    # 반복하면 상태가 전혀 바뀌지 않아 recursion_limit까지 무한 루프가 돈다.
+    # execution이 호출됐는데 아무 tool도 실행 못 했다는 건 그 자체로 실패이므로
+    # invalid_tool 에러로 명시해 observe → reflect의 기존 재시도/종료 경로를 타게 한다.
+    if not new_tool_calls:
+        logger.warning("execution_node: plan 전체에서 tool 추출 실패 — invalid_tool 처리: plan=%s", plan)
+        new_tool_calls.append({
+            "tool": plan[-1] if plan else "unknown",
+            "params": {},
+            "result": f"plan을 실행 가능한 MCP tool로 매핑하지 못했습니다: {plan}",
+            "status": "error",
+            "error_type": "invalid_tool",
+            "error_msg": f"plan {plan!r}에 매칭되는 MCP tool이 없습니다.",
+        })
+
     logger.info("execution_node 완료: 신규 tool_calls=%s", new_tool_calls)
 
     # error_count 반환 없음 — observe_node 가 단일 권위자
+    # plan은 여기서 항상 전부 소비된다(위 for 루프가 매 스텝을 순회) — 명시적으로
+    # 비우지 않으면 LangGraph가 이전 plan을 그대로 유지해, 다음 턴에 supervisor가
+    # 이미 완료된 계획을 "아직 안 함"으로 착각하고 execution을 무한 재위임한다.
     return {
         "tool_calls": new_tool_calls,
         "context_data": {"vehicle_state": new_vehicle_state},
+        "plan": [],
     }

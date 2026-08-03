@@ -21,6 +21,7 @@ from typing import Any, Dict
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.config import MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.memory.experience import build_situation, get_experience_memory
@@ -54,7 +55,7 @@ async def reflect_node(state: AgentState) -> Dict[str, Any]:
     if next_agent == "__end__":
         logger.info("reflect: failure 케이스 진입 — lesson 생성 및 experience 저장")
 
-        llm = ChatOpenAI(model="qwen2.5vl:7b", temperature=0.1)
+        llm = ChatOpenAI(model=QWEN_VL_MODEL_NAME, temperature=0.1, base_url=MODEL_SERVER_URL)
 
         # feedback에서 error_type 추출 (observe가 기록한 형식 파싱)
         error_type = "parameter"

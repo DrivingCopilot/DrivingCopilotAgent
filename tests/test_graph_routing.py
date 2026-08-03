@@ -184,7 +184,7 @@ async def test_react_one_loop_perception(patch_supervisor):
     # plan을 채워 route_after_perception이 execution으로 직행시켜 tracker count가 깨진다.
     mock_vlm_response = MagicMock()
     mock_vlm_response.content = (
-        '{"description": "전방 도로가 맑고 특이사항 없습니다.", "hazards": []}'
+        '{"answer": "전방 도로가 맑고 특이사항 없습니다.", "hazards": []}'
     )
     mock_vlm = MagicMock()
     mock_vlm.ainvoke = AsyncMock(return_value=mock_vlm_response)
@@ -208,7 +208,7 @@ async def test_react_one_loop_perception(patch_supervisor):
     assert "vision_results" in result["context_data"]
     vision = result["context_data"]["vision_results"]
     assert vision["status"] == "success"
-    assert "description" in vision
+    assert vision["answer"] == "전방 도로가 맑고 특이사항 없습니다."
     assert "hazards" in vision
     assert vision["hazards"] == []
 
@@ -273,15 +273,19 @@ async def test_immediate_end(patch_supervisor):
 
 
 @pytest.mark.asyncio
-async def test_recursion_limit_safety(patch_supervisor):
+async def test_unmappable_plan_terminates_via_retry_limit_not_recursion(patch_supervisor):
+    """
+    supervisor가 (mock으로) 계속 'execution'만 반복 지시해도, plan을 MCP tool로
+    매핑 못 하는 상황은 execution.py의 invalid_tool 폴백 → observe.py의 재시도
+    한도에서 정상 종료돼야 한다. 예전엔 매핑 실패가 빈 tool_calls로 "성공"처럼
+    통과돼 이 안전장치를 못 타고 LangGraph의 recursion_limit(하드 크래시)까지
+    가야 멈췄는데, 지금은 그 전에 정상적으로 __end__로 끝나야 한다.
+    """
     patch_supervisor(
         [{"next_agent": "execution", "plan": ["s1"], "feedback": ""}] * 30
     )
 
-    with pytest.raises(Exception) as exc_info:
-        await run_graph("loop test")
+    result = await run_graph("loop test")
 
-    err_str = str(exc_info.value).lower()
-    assert (
-        "recursion" in err_str or "limit" in err_str or "maximum" in err_str
-    ), f"expected recursion-related error, got: {exc_info.value}"
+    assert result["next_agent"] == "__end__"
+    assert any(tc.get("error_type") == "invalid_tool" for tc in result["tool_calls"])

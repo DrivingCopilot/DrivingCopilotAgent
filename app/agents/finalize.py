@@ -34,8 +34,10 @@ def _get_extractor_llm():
     global _extractor_llm
     if _extractor_llm is None:
         from langchain_openai import ChatOpenAI
-        from app.core.config import EXTRACTOR_MODEL_NAME
-        _extractor_llm = ChatOpenAI(model=EXTRACTOR_MODEL_NAME, temperature=0.0)
+        from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
+        _extractor_llm = ChatOpenAI(
+            model=QWEN_TEXT_MODEL_NAME, temperature=0.0, base_url=MODEL_SERVER_URL,
+        )
     return _extractor_llm
 
 

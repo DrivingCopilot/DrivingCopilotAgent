@@ -4,10 +4,11 @@ tests/test_supervisor.py
 Supervisor Agent 단위 테스트.
 
 테스트 구성:
-    Mock LLM — app.agents.supervisor.ChatOllama 클래스를 patch 해
+    Mock LLM — app.agents.supervisor.ChatOpenAI 클래스를 patch 해
                with_structured_output(...).ainvoke() 가 미리 정해둔
                {"parsed": SupervisorDecision(...), "parsing_error": None}
-               을 반환하도록 한다 (grammar-constrained 구조화 출력 흉내).
+               을 반환하도록 한다 (구조화 출력 흉내 — 로컬 모델 서버 기준으로는
+               prompt 기반 best-effort 이지만, 성공 파싱 결과 자체를 mock).
     Mock A2A 발견 — _a2a_client.fetch_all_cards 를 patch.
 
 실행 방법:
@@ -28,13 +29,17 @@ def _make_state(
     context_data: dict | None = None,
     next_agent: str = "",
     user_query: str = "",
+    messages: list | None = None,
+    tool_calls: list | None = None,
 ) -> Dict[str, Any]:
+    if messages is None:
+        messages = [HumanMessage(content=user_query)] if user_query else []
     return {
-        "messages": [HumanMessage(content=user_query)] if user_query else [],
+        "messages": messages,
         "route_type": "vision",
         "plan": [],
         "next_agent": next_agent,
-        "tool_calls": [],
+        "tool_calls": tool_calls or [],
         "context_data": context_data or {},
         "error_count": {},
         "feedback": "",
@@ -44,7 +49,7 @@ def _make_state(
 def _mock_llm_returning(json_payload: dict):
     """
     with_structured_output(...).ainvoke() 가 json_payload로 만든 SupervisorDecision을
-    {"parsed": ..., "parsing_error": None} 형태로 반환하는 ChatOllama Mock을 patch.
+    {"parsed": ..., "parsing_error": None} 형태로 반환하는 ChatOpenAI Mock을 patch.
     """
     from app.agents.supervisor import SupervisorDecision
 
@@ -61,7 +66,7 @@ def _mock_llm_returning(json_payload: dict):
     mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
 
     mock_cls = MagicMock(return_value=mock_instance)
-    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
+    return patch("app.agents.supervisor.ChatOpenAI", new=mock_cls)
 
 
 class TestSupervisorNode:
@@ -80,8 +85,8 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "맑은 날씨입니다.",
                     "hazards": [],
+                    "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
             next_agent="perception",
@@ -145,8 +150,8 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "비가 내리고 있습니다.",
                     "hazards": ["rain"],
+                    "answer": "네, 비가 내리고 있습니다.",
                 }
             },
             next_agent="perception",
@@ -185,8 +190,8 @@ class TestSupervisorNode:
             context_data={
                 "vision_results": {
                     "status": "success",
-                    "description": "맑은 날씨입니다.",
                     "hazards": [],
+                    "answer": "아니요, 비가 오지 않습니다.",
                 }
             },
             next_agent="perception",
@@ -212,6 +217,89 @@ class TestSupervisorNode:
         assert "비" in final_text
         assert final_text != llm_payload["reasoning"]
 
+    async def test_conditional_second_execution_call_is_allowed(self):
+        """
+        회귀 테스트(리뷰 코멘트): "타이어 공기압 확인하고 비정상이면 정비소로
+        안내해줘" 같은 조건부 다단계 요청 — query_dashboard가 이미 성공했어도,
+        그 결과를 보고 LLM이 새로운 tool(set_navigation)로 다시 'execution'을
+        선택하면 차단하지 않고 통과시켜야 한다.
+        """
+        llm_payload = {
+            "reasoning": "Tire pressure is abnormal, navigating to nearest repair shop.",
+            "plan": ["set_navigation destination=근처 정비소"],
+            "next_agent": "execution",
+        }
+        state = _make_state(
+            next_agent="execution",
+            user_query="타이어 압력 확인하고 비정상이면 정비소로 안내해줘",
+            tool_calls=[
+                {
+                    "tool": "query_dashboard",
+                    "params": {"metric": "tire_pressure"},
+                    "result": "FL 20psi (비정상)",
+                    "status": "success",
+                }
+            ],
+        )
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "execution"
+        assert result["plan"] == ["set_navigation destination=근처 정비소"]
+
+    async def test_identical_repeat_execution_call_is_still_blocked(self):
+        """정말로 같은 tool을 반복 요청하는 경우(원래 버그)는 여전히 차단돼야 한다."""
+        llm_payload = {
+            "reasoning": "delegating both actions to execution again",
+            "plan": ["control_climate temperature=25 on=true", "control_window position=closed"],
+            "next_agent": "execution",
+        }
+        state = _make_state(
+            next_agent="execution",
+            user_query="에어컨 25도로 틀어주고 창문 닫아줘",
+            tool_calls=[
+                {
+                    "tool": "control_climate",
+                    "params": {"temperature": 25, "on": True},
+                    "result": "에어컨을 켜고 25도로 설정했습니다.",
+                    "status": "success",
+                },
+                {
+                    "tool": "control_window",
+                    "params": {"is_open": False},
+                    "result": "창문을 닫았습니다.",
+                    "status": "success",
+                },
+            ],
+        )
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        assert result["next_agent"] == "__end__"
+        assert result["plan"] == []
+
 
 def _mock_llm_parsing_error(error: Exception):
     """with_structured_output(...).ainvoke() 가 parsing_error를 채워 반환하는 Mock을 patch."""
@@ -222,7 +310,7 @@ def _mock_llm_parsing_error(error: Exception):
     mock_instance = MagicMock()
     mock_instance.with_structured_output = MagicMock(return_value=mock_structured)
     mock_cls = MagicMock(return_value=mock_instance)
-    return patch("app.agents.supervisor.ChatOllama", new=mock_cls)
+    return patch("app.agents.supervisor.ChatOpenAI", new=mock_cls)
 
 
 class TestSupervisorParsingError:
@@ -295,6 +383,81 @@ class TestComposeToolResultSummary:
         assert "temperature 값이 범위를 벗어났습니다." in summary
 
 
+class TestComposeVisionSummary:
+    """
+    vision_results로부터 최종 답변을 구성하는 _compose_vision_summary 검증.
+    이전엔 related_hazard(사용자 질문이 rain/tunnel/warning_light 중 하나에
+    대한 것인가)를 VLM이 직접 판단해서 넘기면 그걸로 결정론적 네/아니요
+    템플릿을 골랐는데, 작은 VLM이 이 메타 분류를 못 해서(few-shot으로도
+    개선 안 됨) related_hazard 필드 자체를 없앴다. 지금은 answer가 있으면
+    hazard 질문이든 아니든 그대로 신뢰한다.
+    """
+
+    def test_answer_present_is_used_directly_regardless_of_hazard_match(self):
+        """hazard 질문에 대한 answer("네"/"아니요" 포함)도 그대로 통과시킨다."""
+        from app.agents.supervisor import _compose_vision_summary
+
+        yes_case = {
+            "status": "success",
+            "hazards": ["rain"],
+            "answer": "네, 비가 내리고 있습니다.",
+        }
+        assert _compose_vision_summary(yes_case) == "네, 비가 내리고 있습니다."
+
+        no_case = {
+            "status": "success",
+            "hazards": [],
+            "answer": "아니요, 비가 오지 않습니다.",
+        }
+        assert _compose_vision_summary(no_case) == "아니요, 비가 오지 않습니다."
+
+    def test_answer_present_is_used_for_non_hazard_question(self):
+        """3종 hazard 어휘 밖의 질문(예: 도로 표지판)도 VLM이 직접 작성한 answer를 그대로 쓴다."""
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "hazards": [],
+            "answer": "전방 표지판은 속도제한 50 표지판입니다.",
+        }
+        result = _compose_vision_summary(vision_results)
+        assert result == "전방 표지판은 속도제한 50 표지판입니다."
+
+    def test_no_answer_reports_failure_honestly_with_hazards_as_reference(self):
+        """
+        리뷰 회귀 테스트: answer가 비어있으면(perception은 항상 질문과 함께
+        호출되므로 이건 "질문 없음"이 아니라 "VLM이 답을 못 만든 것") hazards를
+        마치 직접 답인 것처럼 내보내지 않는다 — 답을 못 만들었다는 사실을
+        정직하게 알리고 hazards는 참고 정보로만 덧붙인다. hazards를 answer처럼
+        내보내면 화면의 hazard가 질문과 무관하게 확답처럼 보이는 예전
+        related_hazard 오판정 버그와 같은 위험이 있다.
+        """
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {
+            "status": "success",
+            "hazards": ["tunnel"],
+        }
+        result = _compose_vision_summary(vision_results)
+        assert "생성하지 못했습니다" in result
+        assert "터널" in result
+        assert "감지되었습니다" not in result
+
+    def test_no_hazard_no_answer_reports_failure(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {"status": "success", "hazards": []}
+        result = _compose_vision_summary(vision_results)
+        assert "생성하지 못했습니다" in result
+
+    def test_failure_status_reports_error(self):
+        from app.agents.supervisor import _compose_vision_summary
+
+        vision_results = {"status": "fail", "error_msg": "카메라 타임아웃"}
+        result = _compose_vision_summary(vision_results)
+        assert "카메라 타임아웃" in result
+
+
 class TestFilterInternalPlanSteps:
     """plan 배열에서 LangGraph 내부 라우팅 예약어를 걸러내는 _filter_internal_plan_steps 검증."""
 
@@ -308,6 +471,50 @@ class TestFilterInternalPlanSteps:
 
         steps = ["control_wiper on=true", "control_lighting on=true"]
         assert _filter_internal_plan_steps(steps) == steps
+
+
+class TestPlanRepeatsCompletedTools:
+    """
+    _plan_repeats_completed_tools 검증 — execution 재호출 차단 가드가 정당한
+    조건부 다단계 실행(예: query_dashboard 결과를 보고 set_navigation 호출)까지
+    막지 않는지가 핵심 (리뷰 코멘트로 지적된 문제).
+    """
+
+    def test_identical_tools_are_flagged_as_repeat(self):
+        from app.agents.supervisor import _plan_repeats_completed_tools
+
+        plan = ["control_climate temperature=25 on=true", "control_window position=closed"]
+        done = {"control_climate", "control_window"}
+        assert _plan_repeats_completed_tools(plan, done) is True
+
+    def test_new_tool_not_in_done_set_is_not_a_repeat(self):
+        """타이어 공기압 확인(query_dashboard) 후 정비소 안내(set_navigation)는 반복이 아니다."""
+        from app.agents.supervisor import _plan_repeats_completed_tools
+
+        plan = ["set_navigation destination=근처 정비소"]
+        done = {"query_dashboard"}
+        assert _plan_repeats_completed_tools(plan, done) is False
+
+    def test_mixed_plan_with_one_new_tool_is_not_a_repeat(self):
+        """plan에 새 tool이 하나라도 있으면 전체를 통과시킨다."""
+        from app.agents.supervisor import _plan_repeats_completed_tools
+
+        plan = ["control_climate temperature=25 on=true", "set_navigation destination=집"]
+        done = {"control_climate"}
+        assert _plan_repeats_completed_tools(plan, done) is False
+
+    def test_empty_plan_is_not_a_repeat(self):
+        from app.agents.supervisor import _plan_repeats_completed_tools
+
+        assert _plan_repeats_completed_tools([], {"control_climate"}) is False
+
+    def test_plan_step_without_known_tool_name_is_not_a_repeat(self):
+        """plan 텍스트에서 tool 이름을 못 찾으면 안전하게 '반복 아님'으로 처리한다."""
+        from app.agents.supervisor import _plan_repeats_completed_tools
+
+        plan = ["타이어 압력이 비정상이므로 근처 정비소로 안내"]
+        done = {"query_dashboard"}
+        assert _plan_repeats_completed_tools(plan, done) is False
 
 
 class TestSupervisorFinalTextPriority:
@@ -341,3 +548,43 @@ class TestSupervisorFinalTextPriority:
         final_text = result["messages"][0].content
         assert final_text == "와이퍼를 켰습니다."
         assert final_text != llm_payload["reasoning"]
+
+    async def test_vision_summary_ignores_stale_messages_in_multiturn(self):
+        """
+        회귀 테스트: final_text 조립이 messages[0](윈도우에서 가장 오래된 메시지)이
+        아니라 vision_results.answer를 그대로 써야 한다 — 이전엔 messages[0].content를
+        읽어 멀티턴에서 몇 턴 전 메시지를 기준으로 답을 만드는 버그가 있었다.
+        """
+        llm_payload = {"reasoning": "answering from vision results", "plan": [], "next_agent": "__end__"}
+        state = _make_state(
+            context_data={
+                "vision_results": {
+                    "status": "success",
+                    "hazards": [],
+                    "answer": "전방 표지판은 속도제한 50 표지판입니다.",
+                }
+            },
+            next_agent="perception",
+            messages=[
+                HumanMessage(content="와이퍼 켜줘"),
+                AIMessage(content="와이퍼를 켰습니다."),
+                HumanMessage(content="전방 경고 표시판이 뭐야?"),
+            ],
+        )
+
+        with (
+            _mock_llm_returning(llm_payload),
+            patch(
+                "app.agents.supervisor._a2a_client.fetch_all_cards",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("app.graph.ws.websocket_manager.send_status", new_callable=AsyncMock),
+        ):
+            from app.agents.supervisor import supervisor_node
+
+            result = await supervisor_node(state)
+
+        final_text = result["messages"][0].content
+        assert final_text == "전방 표지판은 속도제한 50 표지판입니다."
+        assert "와이퍼" not in final_text

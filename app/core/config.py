@@ -29,7 +29,6 @@ WINDOW_SIZE = 5  # ConversationBufferWindow 단기 메모리 윈도우 크기 (�
 
 # 엔티티 메모리 (사용자 선호도 KV Store, 계획서 2.5)
 ENTITY_PROFILE_PATH = "./data/user_profile.json"
-EXTRACTOR_MODEL_NAME = "qwen2.5:1.5b"
 
 # ---------------------------------------------------------------------------
 # Neo4j (Graph RAG)
@@ -49,18 +48,31 @@ DB_PATH = os.getenv("VEHICLE_DB_PATH", "./data/vehicle_data.db")
 # (mcp_server.py: MCP_HOST/MCP_PORT 환경변수, 기본 http://{host}:{port}/mcp).
 MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:9000/mcp")
 
-# MCP tool 호출 타임아웃 (초)
-MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "10.0"))
+# MCP tool 호출 타임아웃 (초). vector_rag_search(임베딩+Qdrant)가 ~9~10초로 기존
+# 10초 경계에 걸쳐 간헐적 타임아웃이 나 빈 검색 결과를 유발했다 — 여유를 둔다.
+MCP_TOOL_TIMEOUT: float = float(os.getenv("MCP_TOOL_TIMEOUT", "20.0"))
 
 # A2A 태스크(POST /tasks/send) 타임아웃 (초).
 # knowledge/execution/perception 노드는 내부에서 LLM/VLM 추론을 거치므로
-# Agent Card 조회(GET, 5초 기본값)보다 훨씬 여유 있게 잡는다.
-A2A_TASK_TIMEOUT: float = float(os.getenv("A2A_TASK_TIMEOUT", "30.0"))
+# Agent Card 조회(GET, 5초 기본값)보다 훨씬 여유 있게 잡는다. HuggingFace
+# transformers 직접 로딩(app/model_server) 기준 knowledge 실경로가 실측
+# ~39~73초로 Ollama 대비 훨씬 느려 기존 30초로는 노드가 답을 다 만들어도
+# 호출측이 먼저 포기해버렸다 — 실경로를 수용하도록 상향.
+A2A_TASK_TIMEOUT: float = float(os.getenv("A2A_TASK_TIMEOUT", "90.0"))
 
-# Ollama 네이티브 API 엔드포인트 (supervisor의 구조화 출력용 ChatOllama가 사용).
-# OPENAI_BASE_URL(ChatOpenAI 계열이 쓰는 OpenAI 호환 경로, .../v1)과는 별개 설정 —
-# 같은 서버를 가리켜도 문자열 슬라이싱으로 파생시키지 않는다.
-OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# 로컬 HuggingFace 모델 서버 (app/model_server) — OpenAI 호환 엔드포인트.
+# 7B/1.5B 모델을 프로세스당 한 번씩만 로드해 4개 A2A 에이전트 프로세스가 공유한다
+# (기존 Ollama가 하던 역할을 대체 — 토폴로지는 동일, 백엔드만 HuggingFace transformers).
+MODEL_SERVER_URL: str = os.getenv("MODEL_SERVER_URL", "http://localhost:11500/v1")
+
+# 계획/추론/비전에 쓰는 7B 모델. Qwen2-VL은 공식 1.5B 체크포인트가 없어 텍스트
+# 전용 자리는 Qwen2.5-1.5B-Instruct를 쓴다(QWEN_TEXT_MODEL_NAME).
+# 비양자화 체크포인트를 로딩 시점에 bitsandbytes 4bit로 즉석 양자화한다
+# (app/model_server/backend.py) — GPTQ-Int4 사전양자화 체크포인트는 Marlin 커널
+# JIT 컴파일이 필요해 Colab 무료 T4(Turing)에서 컴파일 후 로딩이 멈추는 문제가
+# 있어 피한다.
+QWEN_VL_MODEL_NAME: str = os.getenv("QWEN_VL_MODEL_NAME", "Qwen/Qwen2-VL-7B-Instruct")
+QWEN_TEXT_MODEL_NAME: str = os.getenv("QWEN_TEXT_MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
 
 # ---------------------------------------------------------------------------
 # Observe 노드 재시도 정책 (계획서: 타임아웃 2회, 파라미터 오류 2회, 잘못된 Tool 1회, SQL 오류 3회)
@@ -90,12 +102,3 @@ ALLOWED_ORIGINS = [
     "http://localhost:3000",   # React frontend
     "http://localhost:8000",   # FastAPI backend (server-to-server 호출용)
 ]
-
-# ---------------------------------------------------------------------------
-# Vision 모델 (Perception Agent — Qwen2-VL 7B FP16)
-# ---------------------------------------------------------------------------
-# 계획서 2.4절: Planner/Executor(Qwen2-VL INT4)와 별도로 FP16 모델을 사용한다.
-# 로컬 vLLM 서버가 아직 없는 경우 base_url 이 비어 OpenAI 정식 API로 요청이
-# 나가니, 실제 서버 기동 후 PERCEPTION_VLM_BASE_URL 을 채워야 한다.
-PERCEPTION_VLM_BASE_URL: str = os.getenv("PERCEPTION_VLM_BASE_URL", "")
-PERCEPTION_VLM_MODEL: str = os.getenv("PERCEPTION_VLM_MODEL", "qwen2-vl-7b-fp16")

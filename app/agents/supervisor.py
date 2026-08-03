@@ -12,12 +12,13 @@ import logging
 from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.a2a.client import A2AClient
 from app.a2a.registry import list_cards
-from app.core.config import AGENT_PORT, OLLAMA_BASE_URL
+from app.agents.execution import MCP_TOOLS as _MCP_TOOL_NAMES
+from app.core.config import AGENT_PORT, MODEL_SERVER_URL, QWEN_VL_MODEL_NAME
 from app.graph import ws as _ws
 from app.graph.state import AgentState
 from app.core.config import MAX_RETRY, EXPERIENCE_TOP_K, WINDOW_SIZE
@@ -41,18 +42,12 @@ def _get_entity_memory():
 _a2a_client = A2AClient(base_url=f"http://localhost:{AGENT_PORT}")
 
 # perception.py의 HAZARD_PLAN_STEPS와 동일한 controlled vocabulary에 대한
-# 사용자 안내용 한국어 라벨과, 사용자 질문에서 해당 항목을 묻고 있는지 판별할
-# 키워드. _compose_vision_summary 가 최종 답변 생성에 사용한다.
+# 사용자 안내용 한국어 라벨. _compose_vision_summary가 answer 없이 hazards만
+# 있는 경우(질문 없는 자동 트리거 등)의 통보 문구에 사용한다.
 HAZARD_LABELS: Dict[str, str] = {
     "rain": "비",
     "tunnel": "터널",
     "warning_light": "경고등",
-}
-
-HAZARD_KEYWORDS: Dict[str, List[str]] = {
-    "rain": ["비", "rain", "우산"],
-    "tunnel": ["터널", "tunnel"],
-    "warning_light": ["경고등", "warning"],
 }
 
 # reasoning 텍스트가 특정 sub-agent 위임을 언급하는지 감지하기 위한 힌트.
@@ -104,35 +99,59 @@ def _filter_internal_plan_steps(plan: List[str]) -> List[str]:
     return [step for step in plan if step.strip().lower() not in _INTERNAL_ROUTING_TOKENS]
 
 
-def _compose_vision_summary(vision_results: Dict[str, Any], user_query: str = "") -> str:
+def _plan_repeats_completed_tools(plan: List[str], done_tools: set) -> bool:
+    """
+    plan의 모든 스텝이 "이번 턴에 이미 성공적으로 실행된 tool"만 다시 가리키면
+    True. 리뷰 코멘트로 지적된 문제 — "execution이 한 번 성공하면 무조건
+    재호출 차단"은 "타이어 공기압 확인하고 비정상이면 정비소로 안내해줘"처럼
+    query_dashboard(1차) → 결과를 보고 set_navigation(2차)으로 이어지는 정당한
+    조건부 다단계 실행까지 막아버린다. 그래서 plan 텍스트에 언급된 tool
+    이름이 done_tools에 전혀 없는(=새로운 tool을 요청하는) 스텝이 하나라도
+    있으면 반복이 아니라고 판단해 통과시킨다. plan 텍스트에서 tool 이름을
+    못 찾은 경우(애매한 경우)도 안전하게 "반복 아님"으로 처리해 통과시킨다 —
+    정당한 새 호출을 막는 것보다 가끔 중복 호출을 허용하는 쪽이 안전하다.
+    """
+    if not plan:
+        return False
+    for step in plan:
+        mentioned = [t for t in _MCP_TOOL_NAMES if t in step]
+        if not mentioned or not all(t in done_tools for t in mentioned):
+            return False
+    return True
+
+
+def _compose_vision_summary(vision_results: Dict[str, Any]) -> str:
     """
     vision_results 로부터 사용자 질문에 직접 답하는 한 줄 요약을 만든다.
-    LLM의 reasoning은 모델의 instruction-following 불안정으로 신뢰할 수 없으므로
-    (CoT일 뿐 실제 답변이 아닐 수 있음), 최종 답변은 이 결정적(코드 레벨) 생성기가
-    담당한다 — vision_results.description을 그대로 노출하지 않고, 사용자가
-    "비와?" 처럼 특정 항목을 물었으면 그 항목에 대해서만 명확히 답한다.
+
+    설계 노트: perception.py는 description(항상 채우는 일반 묘사)과 answer
+    (질문이 있을 때만 채우는 답변)를 따로 뒀었는데, 두 필드가 겹치다 보니
+    VLM이 부정적인 답을 description에만 쓰고 answer는 비워버리는 문제가
+    실측으로 확인됐다. 지금은 perception.py가 answer 하나로 필드를 합쳐서
+    (perception은 항상 사용자 질문에 응답해서 호출되므로 answer가 항상
+    채워지는 것을 전제로 함) 이 문제를 없앴다 — 여기서는 그 answer를 그대로
+    신뢰한다.
+
+    리뷰 코멘트: answer가 비어도 hazards가 있으면 그걸 answer인 것처럼
+    내보내던 이전 방식은, perception이 항상 질문과 함께 호출된다는 전제상
+    "질문이 없어서"가 아니라 "VLM이 답을 못 채운 것"이므로, 화면의 hazard를
+    질문과 무관하게 확답처럼 보여주는 예전 버그(related_hazard 오판정)와
+    같은 위험이 있었다. 그래서 답을 못 만들었다는 사실 자체를 정직하게
+    알리고, hazards는 참고 정보로만 덧붙인다.
     """
     if vision_results.get("status") != "success":
         return f"카메라 분석에 실패했습니다: {vision_results.get('error_msg', '알 수 없는 오류')}"
 
+    answer = vision_results.get("answer", "")
+    if answer:
+        return answer
+
     hazards = vision_results.get("hazards", [])
-    description = vision_results.get("description", "")
-
-    asked_hazard = next(
-        (h for h, keywords in HAZARD_KEYWORDS.items() if any(kw in user_query for kw in keywords)),
-        None,
-    )
-    if asked_hazard:
-        label = HAZARD_LABELS[asked_hazard]
-        if asked_hazard in hazards:
-            return f"네, {label}가 감지되었습니다. (카메라 상황: {description})"
-        return f"아니요, {label}는 감지되지 않았습니다. (카메라 상황: {description})"
-
     if hazards:
         labels = ", ".join(HAZARD_LABELS.get(h, h) for h in hazards)
-        return f"{labels}가 감지되었습니다. (카메라 상황: {description})"
+        return f"질문에 대한 답을 정확히 생성하지 못했습니다. (참고로 카메라에서 {labels} 감지됨)"
 
-    return f"비/터널/경고등 등 특별한 위험 요인은 감지되지 않았습니다. (카메라 상황: {description})"
+    return "질문에 대한 답을 카메라 분석 결과에서 생성하지 못했습니다."
 
 
 def _compose_tool_result_summary(last_tool_call: Dict[str, Any]) -> str:
@@ -241,16 +260,19 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
         route_type, current_next_agent, plan, error_count,
     )
 
-    # Ollama 네이티브 grammar-constrained decoding으로 JSON 스키마를 강제한다 —
-    # next_agent는 반드시 유효한 4개 값 중 하나, plan은 반드시 문자열 배열로만
-    # 나오게 되어(SupervisorDecision), 깨진 JSON이나 스키마 이탈 자체가 구조적으로
-    # 불가능해진다. 단, "그 값이 사용자 의도와 의미적으로 맞는가"는 스키마가
-    # 보장 못 하므로 아래 _infer_intended_agent 등 기존 안전장치는 그대로 둔다.
-    structured_llm = ChatOllama(
-        model="qwen2.5vl:7b",
+    # 로컬 모델 서버(app/model_server)에 JSON 스키마를 요청 시점에 함께 보낸다 —
+    # Ollama의 grammar-constrained decoding과 달리 이 서버는 prompt 주입 기반
+    # best-effort 준수만 보장한다(app/model_server/server.py 상단 주석 참고).
+    # 스키마 이탈은 parsing_error 로 아래에서 재시도 처리된다.
+    structured_llm = ChatOpenAI(
+        model=QWEN_VL_MODEL_NAME,
         temperature=0.0,
-        num_predict=300,
-        base_url=OLLAMA_BASE_URL,
+        # max_tokens는 상한일 뿐(정상 응답은 EOS로 일찍 종료되므로 이 값을 올려도
+        # 짧은 응답의 지연은 늘지 않는다). 300은 너무 낮아 reasoning(자유 CoT)이
+        # 길어지면 JSON이 문자열 중간에서 잘려(EOF while parsing) 파싱이 예외로
+        # 터졌다 — 7B가 'brief' 지시를 자주 어기므로 넉넉히 잡아 truncation을 막는다.
+        max_tokens=1024,
+        base_url=MODEL_SERVER_URL,
     ).with_structured_output(SupervisorDecision, method="json_schema", include_raw=True)
 
     # 첫 진입 시에만 experience 검색 (캐시 분기: run_graph 한 번에 재사용)
@@ -375,6 +397,25 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
         next_agent = "__end__"
         new_plan = []
 
+    # 안전장치: execution이 이번 턴에 성공했는데도 LLM이 '이미 완료된 것과 같은'
+    # plan으로 다시 'execution'을 선택하면 강제로 종료 처리한다(perception Rule 2
+    # 위반 차단과 동일한 원리). 단, "타이어 공기압 확인하고 비정상이면 정비소로
+    # 안내해줘"처럼 query_dashboard(1차) 결과를 보고 set_navigation(2차)으로
+    # 이어지는 정당한 조건부 다단계 실행까지 막으면 안 되므로, "이번에 요청한 tool이
+    # 전부 이미 성공한 tool과 겹치는가"로 판단한다 — 겹치지 않는 새 tool이 하나라도
+    # 있으면 통과시킨다. (리뷰 코멘트: 기존엔 last_tool_call 성공 여부만 보고 무조건
+    # 차단해서 이 조건부 다단계 케이스를 막을 위험이 있었음)
+    if next_agent == "execution" and last_tool_call.get("status") == "success":
+        done_tools = {tc.get("tool") for tc in tool_calls if tc.get("status") == "success"}
+        if _plan_repeats_completed_tools(new_plan, done_tools):
+            logger.warning(
+                "supervisor_node: execution 재호출 차단(new_plan=%s, done_tools=%s) "
+                "— __end__ 로 강제 전환",
+                new_plan, done_tools,
+            )
+            next_agent = "__end__"
+            new_plan = []
+
     # 안전장치(반대 방향): reasoning은 특정 sub-agent에게 위임해야 한다고 결론
     # 내렸는데 next_agent가 "__end__"로 나오는 instruction-following 불일치를
     # 바로잡는다. 단, 그 agent가 이번 턴에 이미 결과를 낸 상태(재호출이면
@@ -407,8 +448,7 @@ Follow the Rules & Protocol above (especially Rules 2, 5, 6, 7) using the Contex
     # 이 잔여 케이스는 이번 수정 범위 밖.
     final_text = reasoning
     if next_agent == "__end__" and vision_results:
-        user_query = messages[0].content if messages else ""
-        final_text = _compose_vision_summary(vision_results, user_query)
+        final_text = _compose_vision_summary(vision_results)
     elif next_agent == "__end__" and last_tool_call:
         final_text = _compose_tool_result_summary(last_tool_call)
     elif next_agent == "__end__" and last_knowledge_result:

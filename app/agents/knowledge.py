@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
+from app.core.config import MODEL_SERVER_URL, QWEN_TEXT_MODEL_NAME
 from app.graph.state import AgentState
 from app.graph import ws as _ws
 from app.core.mcp_client import call_mcp_tool_once
@@ -92,7 +93,7 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
     instruction_msg = HumanMessage(content=f"[Supervisor Instruction] {instruction_text}")
     
     # 2. Setup LLM & Tools (G1: Executor uses Qwen2.5 1.5B)
-    llm = ChatOpenAI(model="qwen2.5:1.5b", temperature=0.1)
+    llm = ChatOpenAI(model=QWEN_TEXT_MODEL_NAME, temperature=0.1, base_url=MODEL_SERVER_URL)
     tools = [vector_rag_search, graph_rag_search, text_to_sql_query]
     
     agent = create_react_agent(llm, tools, prompt=KNOWLEDGE_SYSTEM_PROMPT)
@@ -155,5 +156,8 @@ async def knowledge_node(state: AgentState) -> Dict[str, Any]:
             "context_data": {"refined_query": ""},
             "next_agent": "supervisor",
             "error_count": error_count,
-            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}"
+            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}",
+            # 성공 경로(위)는 plan[1:]로 갱신하는데 예외 경로만 plan을 그대로 둬서
+            # 다음 턴에 supervisor가 실패한 스텝을 stale plan으로 다시 보는 걸 방지.
+            "plan": [],
         }
