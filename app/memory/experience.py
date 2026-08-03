@@ -17,6 +17,7 @@ from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from app.core.config import (
     EXPERIENCE_COLLECTION_NAME,
+    EXPERIENCE_DEDUP_THRESHOLD,
     MODEL_NAME,
     VECTOR_SIZE,
 )

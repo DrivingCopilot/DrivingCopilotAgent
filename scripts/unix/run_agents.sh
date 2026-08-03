@@ -9,7 +9,7 @@ trap 'kill 0' EXIT
 
 python -m app.model_server.server &
 
-# 모델 서버가 두 모델(7B GPTQ-Int4 + 1.5B) 로딩을 마칠 때까지 대기 — 최초 실행 시
+# 모델 서버가 두 모델(7B + 1.5B) 로딩을 마칠 때까지 대기 — 최초 실행 시
 # HuggingFace 다운로드까지 겹치면 몇 분 걸릴 수 있다.
 echo "모델 서버 로딩 대기 중..."
 until curl -sf http://localhost:11500/health | grep -q '"ok"'; do

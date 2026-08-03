@@ -623,5 +623,8 @@ async def knowledge_node(state: AgentState) -> dict[str, Any]:
             # tool_calls를 보고 유일하게 카운트한다. 여기서 같이 올리면 이번 한
             # 번의 실패가 observe 카운트 + 이 카운트로 중복 집계돼, MAX_RETRY
             # 한도(parameter=2)를 첫 실패만으로 소진해버린다.
-            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}"
+            "feedback": f"Knowledge Agent failed to execute the plan step due to: {e}",
+            # 성공 경로(위)는 plan[1:]로 갱신하는데 예외 경로만 plan을 그대로 둬서
+            # 다음 턴에 supervisor가 실패한 스텝을 stale plan으로 다시 보는 걸 방지.
+            "plan": [],
         }

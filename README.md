@@ -126,7 +126,8 @@ copy .env.example .env
 `.env.example`에 필요한 값과 설명이 이미 있습니다 — 기본값 그대로 둬도 됩니다.
 모델 가중치는 별도로 받을 필요 없이, 아래 3번 단계에서 모델 서버가 처음 뜰 때
 HuggingFace Hub에서 자동으로 다운로드됩니다(최초 1회, 7B(비양자화 체크포인트,
-로딩 시 4bit 변환) + 1.5B 합쳐 ~18GB — `~/.cache/huggingface`에 캐시).
+로딩 시 4bit 변환) + 1.5B 합쳐 ~18GB — `~/.cache/huggingface`에 캐시). GPU(CUDA)
+환경을 전제로 하며, 처음 기동 시 다운로드+로딩에 몇 분 걸릴 수 있습니다.
 
 ### 1. 가상환경 + 패키지 설치
 
@@ -225,14 +226,17 @@ netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11500"
   값 수정 후에는 해당 프로세스를 반드시 재시작하세요.
 - **CUDA out of memory**: VRAM 8GB 기준으로 7B(bnb 4bit, ~5~6GB) + 1.5B(~3GB)가
   타이트합니다. 다른 GPU 프로세스를 먼저 종료하거나, `QWEN_TEXT_MODEL_NAME`을 더 작은
-  양자화 모델로 바꿔보세요.
-- **모델 서버가 "loading"에서 안 넘어감**: 최초 실행 시 `Qwen2-VL-7B-Instruct`(비양자화,
-  ~15GB) + `Qwen2.5-1.5B-Instruct`를 HuggingFace에서 내려받습니다. 네트워크 상태에
-  따라 꽤 걸릴 수 있고, 이후엔 `~/.cache/huggingface`에서 바로 로드됩니다. (참고: GPTQ
-  사전양자화 체크포인트를 쓰던 이전 방식은 Marlin 커널 JIT 컴파일이 Ampere 이전 세대
-  GPU에서 멈추는 문제가 있어 bnb 4bit 즉석 양자화로 바꿨다 — 커널 컴파일이 없다.)
+  양자화 모델로 바꿔보세요. CUDA 없는 환경에서는 `bitsandbytes` 4bit 양자화가 동작하지
+  않으니 반드시 GPU 서버에서 띄우세요.
+- **모델 서버가 "loading"에서 안 넘어감**: `curl http://localhost:11500/health`로 상태를
+  확인하세요. 최초 실행 시 `Qwen2-VL-7B-Instruct`(비양자화, ~15GB) + `Qwen2.5-1.5B-Instruct`를
+  HuggingFace에서 내려받습니다. 네트워크 상태에 따라 꽤 걸릴 수 있고, 이후엔
+  `~/.cache/huggingface`에서 바로 로드됩니다. (참고: GPTQ 사전양자화 체크포인트를
+  쓰던 이전 방식은 Marlin 커널 JIT 컴파일이 Ampere 이전 세대 GPU에서 멈추는 문제가
+  있어 bnb 4bit 즉석 양자화로 바꿨다 — 커널 컴파일이 없다.)
 - **첫 질문에서 몇십 초씩 멈춤**: `BAAI/bge-m3` 임베딩 모델(2GB+)도 최초 1회 별도로
-  HuggingFace에서 내려받습니다. 프로세스당 한 번만 겪는 정상 동작입니다.
+  HuggingFace에서 내려받습니다. 프로세스당 한 번만 겪는 정상 동작이고, 이후엔
+  캐시(`~/.cache/huggingface`)에서 바로 로드됩니다.
 
 ### 서비스 포트 매핑
 

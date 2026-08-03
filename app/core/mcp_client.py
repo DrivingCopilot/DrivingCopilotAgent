@@ -67,7 +67,11 @@ async def call_mcp_tool_once(
 
         return result_text, "success", "", ""
 
-    except TimeoutError:
+    # noqa 필요: 실제 배포 인터프리터는 3.10(venv/lib/python3.10)이라 asyncio.TimeoutError가
+    # builtin TimeoutError와 별개 클래스다(3.11부터 별칭) — pyproject.toml의 ruff
+    # target-version="py312"을 믿고 UP041(alias 통합) 자동수정을 적용했다가 timeout이
+    # "parameter"로 오분류되는 회귀가 있었다(tests/test_execution.py 로 재현·확인).
+    except asyncio.TimeoutError:  # noqa: UP041
         error_msg = f"'{tool_name}' 호출 타임아웃 ({MCP_TOOL_TIMEOUT}초 초과)"
         logger.warning("MCP timeout: %s", tool_name)
         return error_msg, "error", "timeout", error_msg
