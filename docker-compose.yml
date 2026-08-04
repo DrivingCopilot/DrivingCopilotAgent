@@ -1,0 +1,120 @@
+# docker-compose.yml — DrivingCopilotAgent (본 레포)
+#
+# 이 레포가 소유한 5개 프로세스만 정의한다: 로컬 모델 서버(GPU) + Supervisor + A2A 서버 3종.
+# DrivingCopilotBackend(REST :8000 + MCP :9000, Qdrant, Neo4j)와 DrivingCopilotFrontend(:3000)는
+# 별도 레포/별도 compose 스택이다 — 아직 이 레포와 통합하는 최상위 compose는 없으므로,
+# 기본값은 "Backend가 이 Docker 호스트 위에 네이티브로 떠 있다"고 가정하고
+# host.docker.internal로 연결한다. Backend도 나중에 Docker로 옮기면 .env의
+# MCP_SERVER_URL / BACKEND_URL을 해당 컨테이너 서비스명으로 바꾸면 된다(코드 변경 불필요).
+#
+# 실행:
+#   docker compose up -d
+# 모델 서버는 GPU가 반드시 필요하다(A6000 등) — 호스트에 nvidia-container-toolkit이
+# 설치돼 있어야 하며, GPU가 없는 환경에서는 model-server 서비스가 기동에 실패한다.
+#
+# 최초 기동 시 모델 서버가 HuggingFace에서 7B(~15GB)+1.5B 가중치를 내려받는다 — 수 분 소요.
+# hf-cache 볼륨에 캐시되므로 재기동/재생성 시에는 다시 받지 않는다.
+
+services:
+  model-server:
+    build:
+      context: .
+      dockerfile: docker/model-server.Dockerfile
+    container_name: driving-copilot-model-server
+    restart: unless-stopped
+    ports:
+      - "11500:11500"
+    environment:
+      MODEL_SERVER_URL: "http://0.0.0.0:11500/v1"
+      QWEN_VL_MODEL_NAME: ${QWEN_VL_MODEL_NAME:-Qwen/Qwen2-VL-7B-Instruct}
+      QWEN_TEXT_MODEL_NAME: ${QWEN_TEXT_MODEL_NAME:-Qwen/Qwen2.5-1.5B-Instruct}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://localhost:11500/health')).get('status')=='ok' else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40          # 최초 모델 다운로드+로딩에 수 분 걸릴 수 있어 넉넉히 잡는다
+      start_period: 30s
+
+  supervisor:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    container_name: driving-copilot-supervisor
+    command: ["python", "main.py"]
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment: &agent-env
+      MODEL_SERVER_URL: "http://model-server:11500/v1"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-anything-local-model-server-ignores-this-value}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:9000/mcp}
+      BACKEND_URL: ${BACKEND_URL:-http://host.docker.internal:8000}
+      SUPERVISOR_BASE_URL: "http://supervisor:8001"
+      KNOWLEDGE_BASE_URL: "http://knowledge:8002"
+      EXECUTION_BASE_URL: "http://execution:8003"
+      PERCEPTION_BASE_URL: "http://perception:8004"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux에서 host.docker.internal 해석용
+    depends_on:
+      model-server:
+        condition: service_healthy
+
+  knowledge:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    container_name: driving-copilot-knowledge
+    command: ["python", "-m", "app.a2a.server", "knowledge"]
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment: *agent-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      model-server:
+        condition: service_healthy
+
+  execution:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    container_name: driving-copilot-execution
+    command: ["python", "-m", "app.a2a.server", "execution"]
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment: *agent-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      model-server:
+        condition: service_healthy
+
+  perception:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    container_name: driving-copilot-perception
+    command: ["python", "-m", "app.a2a.server", "perception"]
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment: *agent-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      model-server:
+        condition: service_healthy
+
+volumes:
+  hf-cache:

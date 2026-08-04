@@ -1,0 +1,15 @@
+# app/model_server(GPU) 전용 의존성.
+#
+# torch는 이 파일에서 지정하지 않는다 — docker/model-server.Dockerfile이 NVIDIA CUDA 베이스
+# 이미지 위에서 CUDA 지원 wheel을 별도로 설치한다(requirements-agent.txt의 CPU 전용 wheel과
+# 반대). bitsandbytes 4bit 즉석 양자화(app/model_server/backend.py)는 GPU 전용이라
+# CUDA 빌드의 torch가 반드시 필요하다.
+
+fastapi
+uvicorn[standard]
+python-dotenv
+
+transformers>=4.46
+accelerate
+bitsandbytes
+qwen-vl-utils
