@@ -1,10 +1,11 @@
 langchain>=0.1.0
 langgraph           # ReAct 및 StateGraph 구현의 핵심
 pydantic>=2.0       # A2A 프로토콜 스케마 정의
-mcp                 # Model Context Protocol SDK (12종 Tool 연결용)
+mcp>=1.27.0,<2.0.0  # Model Context Protocol SDK (12종 Tool 연결용). 2.0.0에서 streamablehttp_client 경로가 바뀌어 상한 고정
 
-openai           
-httpx              
+openai
+langchain-openai    # ChatOpenAI — crag/supervisor/knowledge/execution/perception/reflect/text2sql 전체가 사용
+httpx
 fastapi             
 uvicorn[standard]
 websockets          

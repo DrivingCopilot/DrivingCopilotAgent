@@ -1,0 +1,34 @@
+# Supervisor(main.py) + A2A 서버(app.a2a.server: knowledge/execution/perception) 공용 이미지용 의존성.
+#
+# 이 4개 프로세스는 로컬 모델 서버(app/model_server)를 ChatOpenAI(base_url=...)로 HTTP 호출만
+# 할 뿐, 프로세스 내부에서 torch/CUDA 텐서 연산을 하지 않는다(app/memory/experience.py의
+# HuggingFaceEmbeddings도 model_kwargs={"device": "cpu"}로 고정) — 그래서 GPU 베이스 이미지가
+# 필요 없다. 다만 sentence-transformers/langchain-huggingface가 의존성으로 torch를 끌고 오므로,
+# 아래에서 CPU 전용 wheel을 먼저 명시적으로 깔아 기본 CUDA 번들 wheel이 받아지는 것을 막는다
+# (requirements-model-server.txt 쪽은 반대로 GPU wheel이 필요해서 별도 파일로 분리했다).
+
+langchain>=0.1.0
+langgraph
+pydantic>=2.0
+mcp>=1.27.0,<2.0.0  # 2.0.0에서 streamablehttp_client 경로가 바뀌어 상한 고정
+
+openai
+langchain-openai    # ChatOpenAI — crag/supervisor/knowledge/execution/perception/reflect/text2sql 전체가 사용
+httpx
+fastapi
+uvicorn[standard]
+websockets
+pymupdf
+qdrant-client
+neo4j
+sentence-transformers
+
+python-dotenv
+
+PyMuPDF==1.27.2.3
+langchain-community==0.4.1
+langchain-core==1.3.2
+langchain-experimental==0.4.1
+langchain-huggingface==1.2.2
+langchain-qdrant==1.1.0
+qdrant-client==1.17.1

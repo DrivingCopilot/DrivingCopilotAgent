@@ -107,10 +107,12 @@ knowledge/execution/perception --MCP--> Backend mcp_server.py(9000)
 `Qwen2-VL-7B-Instruct`(7B, 로딩 시점에 bitsandbytes 4bit로 즉석 양자화)와
 `Qwen2.5-1.5B-Instruct`(1.5B) 두 모델을 프로세스 시작 시 한 번만 GPU에 로드하고,
 OpenAI 호환 API로 Supervisor/Knowledge/Execution/Perception 4곳에 서빙합니다 —
-GPU 1개(VRAM 8GB 기준)에 모델을 1벌씩만 올리기 위한 구조라 4개 에이전트 프로세스가
-각자 모델을 로드하지 않습니다. (사전 양자화된 GPTQ 체크포인트 대신 bnb 4bit를 쓰는
-이유: GPTQ는 Marlin 커널을 JIT 컴파일해야 하는데, Ampere 이전 세대 GPU(Colab 무료
-T4 등)에서 컴파일 후 로딩이 멈추는 문제가 있어 피한다.)
+타겟 로컬 환경은 A6000(48GB VRAM) 1장이며, 이 GPU 1개에 모델을 1벌씩만 올려
+4개 에이전트 프로세스가 공유하는 구조라 각자 모델을 로드하지 않습니다. (사전
+양자화된 GPTQ 체크포인트 대신 bnb 4bit를 쓰는 이유: GPTQ는 Marlin 커널을 JIT
+컴파일해야 하는데, Ampere 이전 세대 GPU(Colab 무료 T4 등)에서 컴파일 후 로딩이
+멈추는 문제가 있어 피한다 — A6000도 Ampere라 이 문제는 없지만, 이식성을 위해
+bnb 4bit를 그대로 유지한다.)
 
 ### 0. 사전 준비 (한 번만)
 
@@ -188,6 +190,22 @@ python -m app.a2a.server execution
 python -m app.a2a.server perception
 ```
 
+**Docker로 실행 (대안)** — 위 네이티브 실행 대신 Docker Compose로 이 레포의 5개 프로세스를
+한 번에 띄울 수 있습니다. GPU(A6000 등)와 [nvidia-container-toolkit](https://github.com/NVIDIA/nvidia-container-toolkit)이
+설치된 호스트에서만 `model-server`가 정상 기동합니다.
+```bash
+docker compose up -d --build
+```
+- `MCP_SERVER_URL`/`BACKEND_URL` 기본값은 `host.docker.internal`을 통해 이 Docker 호스트 위에
+  네이티브로 떠 있는 `DrivingCopilotBackend`를 가리킵니다 — Backend를 다른 호스트에 두거나
+  나중에 Backend도 Docker화하면 `.env`에서 두 값만 덮어쓰면 됩니다(코드 변경 불필요).
+- 모델 가중치(HuggingFace, ~18GB)는 `hf-cache`라는 named volume에 캐시되어 `docker compose down`
+  후 재기동해도 다시 받지 않습니다(볼륨까지 지우려면 `docker compose down -v`).
+- `Supervisor`/`Knowledge`/`Execution`/`Perception` 4개는 `docker/agent.Dockerfile` 하나를
+  공유하는 CPU-only 이미지입니다(모델 서버만 HTTP로 호출하고 자체 GPU 연산이 없음) — GPU는
+  `model-server` 컨테이너 하나에만 예약됩니다.
+- 개별 서비스 로그: `docker compose logs -f supervisor` (서비스명은 `docker-compose.yml` 참고)
+
 ### 4. `DrivingCopilotFrontend` 실행 (별도 레포)
 
 ```bash
@@ -224,10 +242,13 @@ netstat -ano | findstr "3000 8000 8001 8002 8003 8004 9000 11500"
   `python mcp_server.py`를 REST API(8000)와 별개로 반드시 띄워야 합니다.
 - **`api_key` 관련 에러**: `.env`가 비어있거나, `.env`를 고친 뒤 서버를 재시작 안 한 경우입니다.
   값 수정 후에는 해당 프로세스를 반드시 재시작하세요.
-- **CUDA out of memory**: VRAM 8GB 기준으로 7B(bnb 4bit, ~5~6GB) + 1.5B(~3GB)가
-  타이트합니다. 다른 GPU 프로세스를 먼저 종료하거나, `QWEN_TEXT_MODEL_NAME`을 더 작은
-  양자화 모델로 바꿔보세요. CUDA 없는 환경에서는 `bitsandbytes` 4bit 양자화가 동작하지
-  않으니 반드시 GPU 서버에서 띄우세요.
+- **CUDA out of memory**: 타겟 환경(A6000, 48GB)에서는 7B(bnb 4bit, ~5~6GB) +
+  1.5B(~3GB)가 여유 있게 들어가므로 일반적으로 발생하지 않습니다. 이 에러가 나면
+  같은 GPU를 쓰는 다른 프로세스(Backend/Graph의 로컬 LLM 등)가 VRAM을 점유하고
+  있는지 먼저 확인하세요. VRAM이 더 작은 GPU에서 돌려야 한다면 다른 GPU 프로세스를
+  먼저 종료하거나 `QWEN_TEXT_MODEL_NAME`을 더 작은 양자화 모델로 바꿔보세요. CUDA
+  없는 환경에서는 `bitsandbytes` 4bit 양자화가 동작하지 않으니 반드시 GPU 서버에서
+  띄우세요.
 - **모델 서버가 "loading"에서 안 넘어감**: `curl http://localhost:11500/health`로 상태를
   확인하세요. 최초 실행 시 `Qwen2-VL-7B-Instruct`(비양자화, ~15GB) + `Qwen2.5-1.5B-Instruct`를
   HuggingFace에서 내려받습니다. 네트워크 상태에 따라 꽤 걸릴 수 있고, 이후엔

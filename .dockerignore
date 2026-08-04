@@ -1,0 +1,36 @@
+# git / IDE
+.git/
+.gitignore
+.claude/
+.antigravitycli
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.ruff_cache/
+
+# 로컬 런타임 데이터 — 컨테이너에는 볼륨으로 마운트한다
+data/
+qdrant_storage/
+**/qdrant_storage/
+**/.lock
+
+# 문서/노트북/평가 산출물 — 런타임 이미지에 불필요
+notebooks/
+manuals/
+evaluation/reports/
+traces/
+*.md
+docs/
+
+# 테스트 — 런타임 이미지에 불필요(별도 CI에서 실행)
+tests/
+
+# 로컬 전용 설정
+.env
